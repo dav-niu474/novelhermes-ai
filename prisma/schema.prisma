@@ -1,0 +1,68 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model NovelProject {
+  id              String    @id @default(cuid())
+  spark           String    // 用户输入的灵感关键词
+  title           String    @default("未命名项目") // 书名
+  synopsis        String?   // 一句话简介
+  goldenFinger    String?   // 核心金手指（力量体系）
+  worldBackground String?   // 世界观背景
+  tags            String?   // 作品标签（逗号分隔）
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  characters      Character[]
+  worldRules      WorldRule[]
+  chapters        Chapter[]
+}
+
+model Character {
+  id          String  @id @default(cuid())
+  projectId   String
+  name        String
+  role        String  @default("主角") // 主角/反派/配角
+  personality String? // 性格特质
+  background  String? // 背景档案
+  conflict    String? // 冲突描述
+  project     NovelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model WorldRule {
+  id        String  @id @default(cuid())
+  projectId String
+  category  String  @default("基础规则") // 规则分类
+  title     String
+  content   String
+  project   NovelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Chapter {
+  id        String  @id @default(cuid())
+  projectId String
+  order     Int     @default(0)
+  title     String  @default("未命名章节")
+  summary   String? // 章节摘要
+  content   String? @default("") // 章节正文
+  wordCount Int     @default(0)
+  status    String  @default("draft") // draft/completed
+  project   NovelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  storyBeats StoryBeat[]
+}
+
+model StoryBeat {
+  id        String  @id @default(cuid())
+  chapterId String
+  type      String  // opening/conflict/turn/suspense
+  content   String
+  order     Int     @default(0)
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+}
