@@ -9,6 +9,58 @@ async function getZAI() {
   return zaiInstance
 }
 
+// 鲁棒的 JSON 提取：从 AI 响应中提取 JSON
+function extractJSON(text: string): Record<string, unknown> | null {
+  if (!text || text.trim().length === 0) return null
+
+  // 尝试1: 直接解析
+  try {
+    return JSON.parse(text.trim())
+  } catch {
+    // continue
+  }
+
+  // 尝试2: 提取 markdown code block 中的 JSON
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (codeBlockMatch) {
+    try {
+      return JSON.parse(codeBlockMatch[1].trim())
+    } catch {
+      // continue
+    }
+  }
+
+  // 尝试3: 查找第一个 { 到最后一个 } 之间的内容
+  const firstBrace = text.indexOf('{')
+  const lastBrace = text.lastIndexOf('}')
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      return JSON.parse(text.substring(firstBrace, lastBrace + 1))
+    } catch {
+      // continue
+    }
+  }
+
+  // 尝试4: 逐步修复常见问题
+  let cleaned = text
+  // 移除控制字符
+  cleaned = cleaned.replace(/[\x00-\x1F\x7F]/g, (char) => {
+    if (char === '\n' || char === '\r' || char === '\t') return char
+    return ''
+  })
+  const cb2 = cleaned.indexOf('{')
+  const lb2 = cleaned.lastIndexOf('}')
+  if (cb2 !== -1 && lb2 > cb2) {
+    try {
+      return JSON.parse(cleaned.substring(cb2, lb2 + 1))
+    } catch {
+      // give up
+    }
+  }
+
+  return null
+}
+
 // 灵感激发：从碎片化关键词生成完整小说设定
 export async function generateSparkExpansion(spark: string) {
   const zai = await getZAI()
@@ -41,7 +93,8 @@ export async function generateSparkExpansion(spark: string) {
 - 至少生成2-3个核心人物
 - 角色之间必须有明确的冲突关系
 - 金手指要有成长性和限制，不能太过完美
-- 世界观要为后续冲突提供土壤`,
+- 世界观要为后续冲突提供土壤
+- 只输出JSON，不要有任何其他文字`,
       },
       {
         role: 'user',
@@ -52,16 +105,7 @@ export async function generateSparkExpansion(spark: string) {
   })
 
   const response = completion.choices[0]?.message?.content || ''
-  // 尝试提取JSON
-  const jsonMatch = response.match(/\{[\s\S]*\}/)
-  if (jsonMatch) {
-    try {
-      return JSON.parse(jsonMatch[0])
-    } catch {
-      return null
-    }
-  }
-  return null
+  return extractJSON(response)
 }
 
 // 因果律大纲推演：基于设定生成前5章冲突走向
@@ -74,9 +118,11 @@ export async function generateOutline(project: {
 }) {
   const zai = await getZAI()
 
-  const charactersInfo = project.characters
-    .map((c) => `${c.name}(${c.role}): ${c.personality || ''} | ${c.background || ''} | ${c.conflict || ''}`)
-    .join('\n')
+  const charactersInfo = project.characters.length > 0
+    ? project.characters
+        .map((c) => `${c.name}(${c.role}): ${c.personality || ''} | ${c.background || ''} | ${c.conflict || ''}`)
+        .join('\n')
+    : '暂无角色设定'
 
   const completion = await zai.chat.completions.create({
     messages: [
@@ -84,7 +130,7 @@ export async function generateOutline(project: {
         role: 'assistant',
         content: `你是一位经验丰富的网文大纲策划师，擅长"因果律推演"——确保每个情节都有前因后果，绝不出现逻辑断裂。
 
-你需要根据已有的小说设定，推演前5章的冲突走向。严格按照JSON格式输出。
+你需要根据已有的小说设定，推演前5章的冲突走向。严格按照JSON格式输出，不要输出任何其他文字。
 
 输出格式（严格JSON）：
 {
@@ -108,15 +154,16 @@ export async function generateOutline(project: {
 - 第1章要有强烈的开篇钩子
 - 金手指的获得/觉醒应在前2章内
 - 每章结尾必须留下悬念
-- 冲突要逐步升级，不可原地踏步`,
+- 冲突要逐步升级，不可原地踏步
+- 只输出JSON，不要有任何其他文字`,
       },
       {
         role: 'user',
         content: `小说设定：
 书名：${project.title}
-简介：${project.synopsis || ''}
-金手指：${project.goldenFinger || ''}
-世界观：${project.worldBackground || ''}
+简介：${project.synopsis || '暂无'}
+金手指：${project.goldenFinger || '暂无'}
+世界观：${project.worldBackground || '暂无'}
 人物：
 ${charactersInfo}`,
       },
@@ -125,15 +172,7 @@ ${charactersInfo}`,
   })
 
   const response = completion.choices[0]?.message?.content || ''
-  const jsonMatch = response.match(/\{[\s\S]*\}/)
-  if (jsonMatch) {
-    try {
-      return JSON.parse(jsonMatch[0])
-    } catch {
-      return null
-    }
-  }
-  return null
+  return extractJSON(response)
 }
 
 // 章节戏剧节拍生成
@@ -151,7 +190,7 @@ export async function generateBeats(chapter: {
     messages: [
       {
         role: 'assistant',
-        content: `你是一位戏剧结构专家，擅长为网文章节设计"戏剧节拍"。按照JSON格式输出。
+        content: `你是一位戏剧结构专家，擅长为网文章节设计"戏剧节拍"。按照JSON格式输出，不要输出任何其他文字。
 
 输出格式（严格JSON）：
 {
@@ -163,28 +202,20 @@ export async function generateBeats(chapter: {
   ]
 }
 
-要求：每个type只能出现一次，节拍之间要有因果逻辑。`,
+要求：每个type只能出现一次，节拍之间要有因果逻辑。只输出JSON。`,
       },
       {
         role: 'user',
         content: `章节：${chapter.title}
-摘要：${chapter.summary || ''}
+摘要：${chapter.summary || '暂无'}
 小说：${projectContext.title}
-金手指：${projectContext.goldenFinger || ''}
-世界观：${projectContext.worldBackground || ''}`,
+金手指：${projectContext.goldenFinger || '暂无'}
+世界观：${projectContext.worldBackground || '暂无'}`,
       },
     ],
     thinking: { type: 'disabled' },
   })
 
   const response = completion.choices[0]?.message?.content || ''
-  const jsonMatch = response.match(/\{[\s\S]*\}/)
-  if (jsonMatch) {
-    try {
-      return JSON.parse(jsonMatch[0])
-    } catch {
-      return null
-    }
-  }
-  return null
+  return extractJSON(response)
 }
