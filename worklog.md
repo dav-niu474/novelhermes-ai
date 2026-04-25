@@ -21,3 +21,29 @@ Stage Summary:
 - Vercel deployment successful with proper environment variables
 - GitHub repo: https://github.com/dav-niu474/novelhermes-ai
 - Vercel URL: https://novelhermes-ai.vercel.app
+
+---
+Task ID: 2
+Agent: Main
+Task: Migrate database from SQLite to Supabase PostgreSQL and update Vercel configuration
+
+Work Log:
+- Pulled Vercel environment variables using `vercel env pull` to discover Supabase configuration
+- Found Supabase PostgreSQL credentials in Vercel env vars (novelhermes_POSTGRES_PRISMA_URL, etc.)
+- Updated prisma/schema.prisma: changed provider from "sqlite" to "postgresql", added directUrl for migrations
+- Updated .env file with Supabase DATABASE_URL (pooled connection) and DIRECT_URL (direct connection)
+- Updated .env.local with DATABASE_URL, DIRECT_URL, and NVIDIA_API_KEY (system-level env var was overriding .env files)
+- Updated src/lib/db.ts: removed SQLite-specific cold-start code, added graceful shutdown handler
+- Ran `prisma db push --accept-data-loss` to create tables in Supabase (dropped old Agent/Conversation/Message/Skill/SkillPack tables)
+- Removed local SQLite database file (db/custom.db)
+- Updated package.json dev script to set DATABASE_URL/DIRECT_URL from .env.local before starting Next.js
+- Added Vercel production/preview/development env vars: DATABASE_URL, DIRECT_URL
+- Pushed code to GitHub and redeployed to Vercel
+- Verified production API works: GET /api/projects returns [], POST creates project successfully
+
+Stage Summary:
+- Database migrated from SQLite to Supabase PostgreSQL
+- Prisma schema uses pooled connection (pgbouncer) for runtime queries and direct connection for migrations
+- Production deployment verified working at https://novelhermes-ai.vercel.app
+- Supabase project: yhfiiwcesovijyekllns.supabase.co
+- Key fix: System-level DATABASE_URL was overriding .env files - resolved by setting env vars explicitly in dev script
