@@ -22,6 +22,7 @@ export async function POST(request: Request) {
       await db.novelProject.update({
         where: { id: projectId },
         data: {
+          spark,
           title: result.title || '未命名项目',
           synopsis: result.synopsis,
           goldenFinger: result.goldenFinger,

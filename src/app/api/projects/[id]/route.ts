@@ -39,6 +39,7 @@ export async function PUT(
     const project = await db.novelProject.update({
       where: { id },
       data: {
+        spark: body.spark,
         title: body.title,
         synopsis: body.synopsis,
         goldenFinger: body.goldenFinger,

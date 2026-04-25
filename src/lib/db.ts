@@ -20,9 +20,16 @@ export const db =
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
 
-// Graceful shutdown
+// Graceful shutdown - prevent hanging connections
 if (typeof process !== 'undefined') {
-  process.on('beforeExit', async () => {
-    await db.$disconnect()
-  })
+  const shutdown = async () => {
+    try {
+      await db.$disconnect()
+    } catch {
+      // Ignore disconnect errors
+    }
+    process.exit(0)
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }

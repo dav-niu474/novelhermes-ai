@@ -81,7 +81,11 @@ async function refreshProject(projectId: string): Promise<void> {
   const res = await fetch(`/api/projects/${projectId}`)
   if (res.ok) {
     const data = await res.json()
-    useAppStore.getState().setCurrentProject(data)
+    const store = useAppStore.getState()
+    store.setCurrentProject(data)
+    // Also update in projects list
+    const { projects } = store
+    store.setProjects(projects.map(p => (p.id === data.id ? data : p)))
   }
 }
 

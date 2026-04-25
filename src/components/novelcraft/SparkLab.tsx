@@ -25,6 +25,7 @@ import {
   Flame,
   Star,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 // AI-generated result type
 interface SparkResult {
@@ -68,7 +69,15 @@ const DEFAULT_ROLE_STYLE = {
 }
 
 export default function SparkLab() {
-  const { currentProject, setCurrentProject, setActiveTab, isLoading, setIsLoading } = useAppStore()
+  const {
+    currentProject,
+    setCurrentProject,
+    setActiveTab,
+    isLoading,
+    setIsLoading,
+    projects,
+    setProjects,
+  } = useAppStore()
 
   // Local state
   const [sparkInput, setSparkInput] = useState(currentProject?.spark || '')
@@ -96,6 +105,38 @@ export default function SparkLab() {
 
   const displayResult = sparkResult || existingResult
 
+  // Helper: ensure a project exists before doing operations
+  const ensureProject = useCallback(async (): Promise<NovelProject> => {
+    if (currentProject) return currentProject
+
+    // Auto-create a project if none exists
+    const res = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ spark: sparkInput.trim(), title: '未命名项目' }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || '创建项目失败')
+    }
+    const project: NovelProject = await res.json()
+    setCurrentProject(project)
+    setProjects([project, ...projects])
+    return project
+  }, [currentProject, sparkInput, setCurrentProject, projects, setProjects])
+
+  // Helper: update store with refreshed project data and sync projects list
+  const updateStoreWithProject = useCallback((project: NovelProject) => {
+    setCurrentProject(project)
+    setProjects(prev => {
+      const exists = prev.some(p => p.id === project.id)
+      if (exists) {
+        return prev.map(p => (p.id === project.id ? project : p))
+      }
+      return [project, ...prev]
+    })
+  }, [setCurrentProject, setProjects])
+
   // Fire the spark - call AI API
   const handleSpark = useCallback(async () => {
     if (!sparkInput.trim()) return
@@ -105,15 +146,16 @@ export default function SparkLab() {
     setIsLoading(true)
 
     try {
-      const body: { spark: string; projectId?: string } = { spark: sparkInput.trim() }
-      if (currentProject?.id) {
-        body.projectId = currentProject.id
-      }
+      // Ensure we have a project before generating
+      const project = await ensureProject()
 
       const res = await fetch('/api/ai/spark', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          spark: sparkInput.trim(),
+          projectId: project.id,
+        }),
       })
 
       const data = await res.json()
@@ -127,16 +169,16 @@ export default function SparkLab() {
         setSparkResult(data.result)
       }
 
-      // If API returned an updated project, set it in store
+      // If API returned an updated project, update store
       if (data.project) {
-        setCurrentProject(data.project)
+        updateStoreWithProject(data.project)
       }
-    } catch {
-      setError('网络错误，请检查连接后重试')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '网络错误，请检查连接后重试')
     } finally {
       setIsLoading(false)
     }
-  }, [sparkInput, currentProject, setCurrentProject, setIsLoading])
+  }, [sparkInput, ensureProject, updateStoreWithProject, setIsLoading])
 
   // Save project - call projects API directly (no AI re-generation)
   const handleSave = useCallback(async () => {
@@ -146,89 +188,63 @@ export default function SparkLab() {
     setError(null)
 
     try {
-      if (currentProject?.id) {
-        // Update existing project directly
-        const res = await fetch(`/api/projects/${currentProject.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: displayResult.title,
-            synopsis: displayResult.synopsis,
-            goldenFinger: displayResult.goldenFinger,
-            worldBackground: displayResult.worldBackground,
-            tags: displayResult.tags,
-          }),
-        })
-        if (!res.ok) throw new Error('Update failed')
+      const project = await ensureProject()
 
-        // Update characters: delete old, create new
-        for (const char of currentProject.characters) {
-          await fetch(`/api/characters/${char.id}`, { method: 'DELETE' })
-        }
-        if (displayResult.characters?.length) {
-          for (const char of displayResult.characters) {
-            await fetch(`/api/projects/${currentProject.id}/characters`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                name: char.name,
-                role: char.role || '主角',
-                personality: char.personality,
-                background: char.background,
-                conflict: char.conflict,
-              }),
-            })
+      // Update existing project directly
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          spark: sparkInput.trim(),
+          title: displayResult.title,
+          synopsis: displayResult.synopsis,
+          goldenFinger: displayResult.goldenFinger,
+          worldBackground: displayResult.worldBackground,
+          tags: displayResult.tags,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || '保存项目失败')
+      }
+
+      // Update characters: delete old, create new
+      for (const char of project.characters) {
+        await fetch(`/api/characters/${char.id}`, { method: 'DELETE' })
+      }
+      if (displayResult.characters?.length) {
+        for (const char of displayResult.characters) {
+          const charRes = await fetch(`/api/projects/${project.id}/characters`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: char.name,
+              role: char.role || '主角',
+              personality: char.personality,
+              background: char.background,
+              conflict: char.conflict,
+            }),
+          })
+          if (!charRes.ok) {
+            console.warn('Failed to create character:', char.name)
           }
-        }
-
-        // Re-fetch project to get updated data
-        const freshRes = await fetch(`/api/projects/${currentProject.id}`)
-        const freshProject: NovelProject = await freshRes.json()
-        setCurrentProject(freshProject)
-      } else {
-        // Create new project
-        const res = await fetch('/api/projects', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            spark: sparkInput.trim(),
-            title: displayResult.title,
-            synopsis: displayResult.synopsis,
-            goldenFinger: displayResult.goldenFinger,
-            worldBackground: displayResult.worldBackground,
-            tags: displayResult.tags,
-          }),
-        })
-        const project: NovelProject = await res.json()
-        setCurrentProject(project)
-
-        // Now create characters for the new project
-        if (displayResult.characters?.length) {
-          for (const char of displayResult.characters) {
-            await fetch(`/api/projects/${project.id}/characters`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                name: char.name,
-                role: char.role || '主角',
-                personality: char.personality,
-                background: char.background,
-                conflict: char.conflict,
-              }),
-            })
-          }
-          // Re-fetch project to get characters
-          const freshRes = await fetch(`/api/projects/${project.id}`)
-          const freshProject: NovelProject = await freshRes.json()
-          setCurrentProject(freshProject)
         }
       }
-    } catch {
-      setError('保存失败，请重试')
+
+      // Re-fetch project to get updated data
+      const freshRes = await fetch(`/api/projects/${project.id}`)
+      if (freshRes.ok) {
+        const freshProject: NovelProject = await freshRes.json()
+        updateStoreWithProject(freshProject)
+      }
+
+      toast.success('项目已保存')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败，请重试')
     } finally {
       setIsLoading(false)
     }
-  }, [displayResult, currentProject, sparkInput, setCurrentProject, setIsLoading])
+  }, [displayResult, sparkInput, ensureProject, updateStoreWithProject, setIsLoading])
 
   // Navigate to architecture tab
   const handleGoToArchitecture = () => {
