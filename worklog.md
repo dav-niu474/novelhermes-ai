@@ -85,3 +85,45 @@ Stage Summary:
 - ✅ Lint 通过（0 errors）
 - ✅ 开发服务器正常运行
 - ✅ API 实测成功：Hermes 能正确引用项目设定进行对话
+
+---
+Task ID: 3
+Agent: Main
+Task: 将 Hermes Agent 与系统创作脚手链深度集成，实现全程引导与工具执行
+
+Work Log:
+- 重构 Hermes 类型系统 (types.ts)
+  - 新增 HermesActionType: generate_spark, generate_outline, add_character, add_world_rule, write_chapter_draft, navigate_to, analyze_project_state
+  - 新增 HermesAction 接口 (type, label, status, detail)
+  - HermesMessage 新增 actions 字段
+- 重写 Hermes 后端 API (route.ts) — 工具执行循环架构
+  - 定义7个可执行工具及其描述（供AI识别和调用）
+  - 实现工具解析器：从AI响应中提取 ```action JSON 块
+  - 实现工具执行器：每个工具对应真实的数据库操作
+    - generate_spark: 调用AI生成灵感 → 保存到DB
+    - generate_outline: 调用AI推演大纲 → 保存章节+节拍到DB
+    - add_character: 创建角色到DB
+    - add_world_rule: 创建世界规则到DB
+    - write_chapter_draft: AI生成章节正文 → 保存到DB
+    - navigate_to: 返回导航指令
+    - analyze_project_state: 分析项目缺失项和进度
+  - 系统提示词增加工具说明、调用格式规范、项目状态分析
+  - AI响应后自动解析工具调用、执行、返回结果+更新项目
+- 扩展 Zustand Store
+  - 新增 refreshProject() 方法（从后端刷新当前项目）
+  - setCurrentProject 同时更新 projects 列表
+- 重写 HermesAgent 前端组件
+  - 新增 ActionBadge 组件：显示工具执行状态（成功/运行中/失败）
+  - 新增6个快捷操作（一键创作、灵感瓶颈、一致性检查、项目诊断、写章草稿、推演大纲）
+  - processResponse 处理逻辑：更新项目状态、执行导航、刷新数据
+  - 消息气泡显示 actions 执行徽章
+- 主页面无需改动，通过 store 自动同步
+
+Stage Summary:
+- ✅ Hermes Agent 可直接执行7种创作工具
+- ✅ AI自动识别用户意图并调用工具（如"帮我生成灵感"→调用generate_spark）
+- ✅ 工具执行结果自动同步到前端项目状态
+- ✅ 支持导航操作（如生成大纲后自动跳转到大纲页）
+- ✅ 支持一键创作流程（灵感到大纲）
+- ✅ API 实测成功：spark+outline 链式执行耗时15-35秒
+- ✅ Lint 通过（0 errors）

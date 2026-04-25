@@ -38,9 +38,11 @@ interface AppState {
   clearHermesMessages: () => void
   hermesLoading: boolean
   setHermesLoading: (loading: boolean) => void
+  /** Refresh current project from backend */
+  refreshProject: () => Promise<void>
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   activeTab: 'spark',
   setActiveTab: (tab) => set({ activeTab: tab }),
 
@@ -76,4 +78,23 @@ export const useAppStore = create<AppState>((set) => ({
   clearHermesMessages: () => set({ hermesMessages: [] }),
   hermesLoading: false,
   setHermesLoading: (loading) => set({ hermesLoading: loading }),
+
+  refreshProject: async () => {
+    const { currentProject } = get()
+    if (!currentProject) return
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}`)
+      if (res.ok) {
+        const fresh = await res.json()
+        set({ currentProject: fresh })
+        // Also update in projects list
+        const { projects } = get()
+        set({
+          projects: projects.map((p) => (p.id === fresh.id ? fresh : p)),
+        })
+      }
+    } catch (err) {
+      console.error('Failed to refresh project:', err)
+    }
+  },
 }))

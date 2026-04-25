@@ -76,6 +76,24 @@ export interface HermesMessage {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  /** Actions executed by the agent alongside this message */
+  actions?: HermesAction[]
+}
+
+export type HermesActionType =
+  | 'generate_spark'
+  | 'generate_outline'
+  | 'add_character'
+  | 'add_world_rule'
+  | 'update_project'
+  | 'navigate_to'
+  | 'write_chapter_draft'
+
+export interface HermesAction {
+  type: HermesActionType
+  label: string        // Human-readable label e.g. "已生成灵感设定"
+  status: 'running' | 'success' | 'error'
+  detail?: string      // Optional detail
 }
 
 export interface HermesConversation {
