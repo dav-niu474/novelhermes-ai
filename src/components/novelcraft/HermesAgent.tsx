@@ -41,6 +41,10 @@ import {
   ChevronRight,
   Check,
   ClipboardCheck,
+  RefreshCw,
+  BookMarked,
+  Search,
+  Palette,
 } from 'lucide-react'
 
 // ─── Workflow Stage Config ────────────────────────────────────────────────────
@@ -69,6 +73,10 @@ const QUICK_ACTIONS: QuickActionDef[] = [
   { icon: <Zap className="size-3.5" />, label: '项目诊断', prompt: '请分析当前项目的创作进度，告诉我还缺少什么，建议下一步操作', stage: 'any' },
   { icon: <GitBranch className="size-3.5" />, label: '推演大纲', prompt: '请基于当前设定推演前5章大纲', stage: 'outline' },
   { icon: <Wand2 className="size-3.5" />, label: '写章草稿', prompt: '请为第一章生成草稿正文', stage: 'writing' },
+  // Wangwen-Creative Skill Actions
+  { icon: <Search className="size-3.5" />, label: '拆文分析', prompt: '请帮我做拆文分析，我想学习优秀网文的创作方法', stage: 'any' },
+  { icon: <Palette className="size-3.5" />, label: '金手指设计', prompt: '请为我的项目设计3个差异化的金手指方案', stage: 'architecture' },
+  { icon: <BookMarked className="size-3.5" />, label: '创作方向', prompt: '我不知道写什么类型的网文，请推荐3个差异化方向', stage: 'spark' },
 ]
 
 // ─── Adopt Button for Assistant Messages ──────────────────────────────────────
@@ -207,6 +215,11 @@ function ActionBadge({ action }: { action: HermesAction }) {
     analyze_project_state: <Zap className="size-3" />,
     validate_readiness: <Shield className="size-3" />,
     suggest_next_step: <Target className="size-3" />,
+    search_novel: <Search className="size-3" />,
+    deconstruct_novel: <BookMarked className="size-3" />,
+    generate_genre_outline: <GitBranch className="size-3" />,
+    design_golden_finger: <Wand2 className="size-3" />,
+    creative_consultation: <Palette className="size-3" />,
   }
 
   return (
@@ -415,8 +428,61 @@ export default function HermesAgent() {
   } = useAppStore()
 
   const [input, setInput] = useState('')
+  const [skillUpdating, setSkillUpdating] = useState(false)
+  const [skillLastUpdated, setSkillLastUpdated] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Load skill info on mount
+  useEffect(() => {
+    async function loadSkillInfo() {
+      try {
+        const res = await fetch('/api/skills')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.wangwenCreative) {
+            setSkillLastUpdated(data.wangwenCreative.lastUpdated)
+          }
+        }
+      } catch {
+        // Ignore
+      }
+    }
+    loadSkillInfo()
+  }, [])
+
+  // Update skill from GitHub
+  const handleUpdateSkill = useCallback(async () => {
+    setSkillUpdating(true)
+    try {
+      const res = await fetch('/api/skills', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_wangwen' }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setSkillLastUpdated(data.version || new Date().toISOString())
+        addHermesMessage({
+          id: `msg-${Date.now()}-system`,
+          role: 'assistant',
+          content: `✅ 网文创作技能已更新到最新版本！新的创作方法论、类型模板和素材库已就绪。`,
+          timestamp: new Date().toISOString(),
+        })
+      } else {
+        addHermesMessage({
+          id: `msg-${Date.now()}-system`,
+          role: 'assistant',
+          content: `❌ 技能更新失败：${data.message}`,
+          timestamp: new Date().toISOString(),
+        })
+      }
+    } catch (err) {
+      console.error('Skill update error:', err)
+    } finally {
+      setSkillUpdating(false)
+    }
+  }, [addHermesMessage])
 
   // Auto-scroll
   useEffect(() => {
@@ -635,6 +701,22 @@ export default function HermesAgent() {
           </div>
 
           <div className="flex items-center gap-1">
+            {/* Skill Update Button */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-amber-500 hover:text-amber-600 hover:bg-amber-500/10"
+                  onClick={handleUpdateSkill}
+                  disabled={skillUpdating}
+                >
+                  <RefreshCw className={cn("size-3.5", skillUpdating && "animate-spin")} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>更新网文创作技能</TooltipContent>
+            </Tooltip>
+
             {hasMessages && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -671,6 +753,13 @@ export default function HermesAgent() {
             <BookOpen className="size-3 text-emerald-500 shrink-0" />
             <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium truncate">
               {currentProject.title}
+            </span>
+          </div>
+          {/* Skill Badge */}
+          <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/5 border border-amber-500/10 shrink-0">
+            <BookMarked className="size-3 text-amber-500" />
+            <span className="text-[9px] text-amber-600 dark:text-amber-400 font-medium">
+              网文创技
             </span>
           </div>
         </div>

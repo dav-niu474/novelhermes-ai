@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { generateSparkExpansion, generateOutline } from '@/lib/ai'
 import { chat } from '@/lib/nvidia-ai'
+import { buildSkillContextForHermes, getSkillReference, getGenreTemplate } from '@/lib/skill-loader'
 import { NextResponse } from 'next/server'
 
 // ─── Tool Definitions ────────────────────────────────────────────────────────
@@ -56,6 +57,31 @@ const TOOLS = [
   {
     name: 'suggest_next_step',
     description: '根据当前项目状态，建议用户下一步应该做什么。返回建议操作和导航目标。无需额外参数。',
+    params: [],
+  },
+  {
+    name: 'search_novel',
+    description: '在番茄小说平台搜索小说。需要搜索关键词(书名/作者/关键词)。返回搜索结果列表。用于拆文分析前的原文获取。',
+    params: ['query'],
+  },
+  {
+    name: 'deconstruct_novel',
+    description: '对指定作品进行六维度拆文分析（结构/角色/设定/节奏/文笔/商业）。需要书名和分析维度(可选: structure/character/setting/rhythm/writing/commerce，默认全维度)。返回拆文分析报告。',
+    params: ['novelName', 'dimensions'],
+  },
+  {
+    name: 'generate_genre_outline',
+    description: '基于网文创作技能的类型模板，为指定类型生成定制化大纲。需要类型名称(如: xianxia/urban-rebirth/system-flow/infinite-flow/suspense/apocalypse/scifi-future/history-time-travel/game-esports/cultivation)。比通用大纲更专业，融合类型特色和创作方法论。',
+    params: ['genre'],
+  },
+  {
+    name: 'design_golden_finger',
+    description: '为项目设计3个差异化的金手指方案。基于项目类型和已有设定，生成从经典到新颖递进的变体方案。每个方案含核心能力、激活条件、限制机制、成长路径。无需额外参数，使用项目已有设定。',
+    params: [],
+  },
+  {
+    name: 'creative_consultation',
+    description: '创作方向顾问模式。当用户需求模糊（不知道写什么类型/方向）时触发，推荐3个差异化创作方向，每个含类型名、核心卖点、金手指方向、体验关键词。',
     params: [],
   },
 ] as const
@@ -538,6 +564,374 @@ ${beatsInfo || '暂无'}`,
         }
       }
 
+      // ── 小说搜索（网文创作技能） ──
+      case 'search_novel': {
+        const query = String(args.query || '')
+        if (!query.trim()) {
+          return { success: false, error: '搜索关键词不能为空', label: '搜索失败' }
+        }
+        // Use AI to provide novel search guidance since we can't directly access 番茄小说 API
+        const searchGuidance = await chat([
+          {
+            role: 'system',
+            content: `你是网文搜索顾问。用户想搜索小说，请根据关键词提供搜索建议和推荐。
+注意：你必须在回答中提醒用户，由于平台限制，你无法直接搜索和下载小说内容，但可以：
+1. 推荐符合关键词的热门小说
+2. 提供搜索建议（在番茄小说平台搜索）
+3. 如果用户已有书名，可以提供该作品的拆文分析
+请用中文回复，简洁有条理。`,
+          },
+          {
+            role: 'user',
+            content: `搜索关键词：${query}`,
+          },
+        ], { temperature: 0.5, max_tokens: 2048 })
+
+        return {
+          success: true,
+          data: { query, guidance: searchGuidance },
+          label: `搜索「${query}」完成`,
+        }
+      }
+
+      // ── 拆文分析（网文创作技能） ──
+      case 'deconstruct_novel': {
+        const novelName = String(args.novelName || '')
+        const dimensions = String(args.dimensions || 'all')
+        if (!novelName.trim()) {
+          return { success: false, error: '书名不能为空', label: '拆文分析失败' }
+        }
+
+        // Load deconstruction reference for richer analysis
+        const deconRef = await getSkillReference('deconstruction-guide')
+        const deconRefSection = deconRef
+          ? `\n\n参考拆文方法论（核心框架）：\n${deconRef.slice(0, 3000)}`
+          : ''
+
+        const dimensionMap: Record<string, string> = {
+          structure: '结构拆解',
+          character: '角色拆解',
+          setting: '设定拆解',
+          rhythm: '节奏拆解',
+          writing: '文笔拆解',
+          commerce: '商业拆解',
+        }
+        const targetDimensions = dimensions === 'all'
+          ? Object.values(dimensionMap)
+          : dimensions.split(',').map(d => dimensionMap[d.trim()] || d.trim()).filter(Boolean)
+
+        const project = await db.novelProject.findUnique({
+          where: { id: projectId },
+          include: { characters: true },
+        })
+
+        const analysis = await chat([
+          {
+            role: 'system',
+            content: `你是专业的拆文分析师。请对指定作品进行六维度拆文分析。
+${deconRefSection}
+
+分析维度：${targetDimensions.join('、')}
+
+请按以下格式输出拆文报告：
+
+# 拆文分析报告：${novelName}
+> 分析日期：${new Date().toISOString().split('T')[0]}
+> 分析维度：${targetDimensions.join('、')}
+
+## 📊 总评
+- 类型定位：
+- 核心卖点：
+- 创作难度：⭐-⭐⭐⭐⭐⭐
+- 可复用指数：⭐-⭐⭐⭐⭐⭐
+
+${targetDimensions.map(dim => `## ${dim}\n[详细分析内容]`).join('\n\n')}
+
+## 🔬 核心原理提取
+### 原理1：
+- 具体表现：
+- 底层逻辑：
+- 可复用方法：
+- 适用场景：
+
+## 📦 素材入库清单
+| 素材名称 | 类型 | 入库位置 |
+
+---
+⚠️ 注意：由于无法直接获取原文，本分析基于对该作品的公开信息和通用认知。如需精确拆文，请用户提供原文片段。
+
+请用中文回复。`,
+          },
+          {
+            role: 'user',
+            content: `请对《${novelName}》进行拆文分析。
+${project ? `当前项目上下文：\n书名：${project.title}\n类型：${project.tags || '未定'}\n金手指：${project.goldenFinger || '未定'}\n世界观：${project.worldBackground || '未定'}` : ''}`,
+          },
+        ], { temperature: 0.7, max_tokens: 4096 })
+
+        return {
+          success: true,
+          data: { novelName, dimensions: targetDimensions, analysis },
+          label: `《${novelName}》拆文分析完成`,
+        }
+      }
+
+      // ── 类型定制大纲（网文创作技能） ──
+      case 'generate_genre_outline': {
+        const genre = String(args.genre || '')
+        if (!genre.trim()) {
+          return { success: false, error: '类型名称不能为空', label: '类型大纲生成失败' }
+        }
+
+        // Load the genre template for reference
+        const template = await getGenreTemplate(genre)
+        const templateSection = template
+          ? `\n\n参考类型模板：\n${template.slice(0, 3000)}`
+          : ''
+
+        const project = await db.novelProject.findUnique({
+          where: { id: projectId },
+          include: { characters: true, worldRules: true },
+        })
+
+        if (!project || project.title === '未命名项目') {
+          return { success: false, error: '请先在灵感实验室生成项目设定', label: '类型大纲生成失败' }
+        }
+
+        const genreGuideRef = await getSkillReference('genre-guide')
+        const genreGuideSection = genreGuideRef
+          ? `\n\n参考类型指南（摘录）：\n${genreGuideRef.slice(0, 2000)}`
+          : ''
+
+        const outline = await chat([
+          {
+            role: 'system',
+            content: `你是专业的网文大纲设计师，擅长基于类型模板设计因果递进的大纲。
+${templateSection}
+${genreGuideSection}
+
+请根据项目设定和类型模板，生成5章因果递进的大纲。每章包含：
+- 章节标题
+- 摘要（50-100字）
+- 4个节拍：开场(opening) → 冲突(conflict) → 转折(turn) → 悬念(suspense)
+
+输出JSON格式：
+{
+  "chapters": [
+    {
+      "order": 1,
+      "title": "章节标题",
+      "summary": "章节摘要",
+      "beats": [
+        {"type": "opening", "content": "..."},
+        {"type": "conflict", "content": "..."},
+        {"type": "turn", "content": "..."},
+        {"type": "suspense", "content": "..."}
+      ]
+    }
+  ]
+}
+
+严格遵循类型特色和节奏三定律：3000字一个小钩子、3章一个大爽点、10章一个剧情弧。
+直接输出JSON，不要输出其他内容。`,
+          },
+          {
+            role: 'user',
+            content: `书名：${project.title}
+简介：${project.synopsis || '暂无'}
+金手指：${project.goldenFinger || '暂无'}
+世界观：${project.worldBackground || '暂无'}
+角色：${project.characters.map(c => `${c.name}(${c.role})`).join('、') || '暂无'}
+世界规则：${project.worldRules.map(r => `[${r.category}]${r.title}:${r.content}`).join('；') || '暂无'}
+类型：${genre}`,
+          },
+        ], { temperature: 0.8, max_tokens: 4096 })
+
+        // Parse and save the outline
+        let parsed: { chapters: unknown[] } | null = null
+        try {
+          const jsonMatch = outline.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            parsed = JSON.parse(jsonMatch[0])
+          }
+        } catch {
+          // Try the AI's extractJSON approach
+          const firstBrace = outline.indexOf('{')
+          const lastBrace = outline.lastIndexOf('}')
+          if (firstBrace !== -1 && lastBrace > firstBrace) {
+            try {
+              parsed = JSON.parse(outline.slice(firstBrace, lastBrace + 1))
+            } catch {
+              // Give up
+            }
+          }
+        }
+
+        if (!parsed || !parsed.chapters || !Array.isArray(parsed.chapters)) {
+          return { success: false, error: 'AI 返回的大纲格式异常，请重试', label: '类型大纲生成失败' }
+        }
+
+        // Save to database (same as generate_outline)
+        await db.chapter.deleteMany({ where: { projectId } })
+        for (let idx = 0; idx < parsed.chapters.length; idx++) {
+          const ch = parsed.chapters[idx] as Record<string, unknown>
+          const chapter = await db.chapter.create({
+            data: {
+              projectId,
+              order: typeof ch.order === 'number' ? ch.order : idx + 1,
+              title: String(ch.title || `第${idx + 1}章`),
+              summary: String(ch.summary || ''),
+              content: '',
+              status: 'draft',
+            },
+          })
+          if (ch.beats && Array.isArray(ch.beats)) {
+            for (let i = 0; i < (ch.beats as Record<string, unknown>[]).length; i++) {
+              const beat = (ch.beats as Record<string, unknown>[])[i]
+              await db.storyBeat.create({
+                data: {
+                  chapterId: chapter.id,
+                  type: String(beat.type || 'opening'),
+                  content: String(beat.content || ''),
+                  order: i,
+                },
+              })
+            }
+          }
+        }
+
+        const updated = await db.novelProject.findUnique({
+          where: { id: projectId },
+          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } } },
+        })
+
+        return { success: true, data: { project: updated, genre }, label: `${genre}类型大纲已生成` }
+      }
+
+      // ── 金手指设计（网文创作技能） ──
+      case 'design_golden_finger': {
+        const project = await db.novelProject.findUnique({
+          where: { id: projectId },
+          include: { characters: true, worldRules: true },
+        })
+        if (!project) {
+          return { success: false, error: '项目不存在', label: '金手指设计失败' }
+        }
+
+        const goldenFingerRef = await getSkillReference('genre-guide')
+        const refSection = goldenFingerRef
+          ? `\n\n参考金手指类型指南：\n${goldenFingerRef.slice(0, 2000)}`
+          : ''
+
+        const designs = await chat([
+          {
+            role: 'system',
+            content: `你是专业的网文金手指设计师。请设计3个差异化的金手指方案。
+要求：
+1. 3个方案从经典到新颖递进
+2. 每个方案包含：类型、核心能力、激活条件、限制机制、成长路径
+3. 金手指必须有代价和限制，不能无脑无敌
+4. 符合项目已有的类型和设定
+${refSection}
+
+输出JSON格式：
+{
+  "schemes": [
+    {
+      "name": "方案名",
+      "type": "系统/重生/血脉/天赋/外挂",
+      "coreAbility": "核心能力描述",
+      "activationCondition": "激活条件",
+      "limitation": "限制/代价",
+      "growthPath": "成长路径",
+      "uniqueness": "独特之处"
+    }
+  ]
+}
+
+直接输出JSON。`,
+          },
+          {
+            role: 'user',
+            content: `书名：${project.title}
+简介：${project.synopsis || '暂无'}
+当前金手指：${project.goldenFinger || '暂无'}
+世界观：${project.worldBackground || '暂无'}
+类型标签：${project.tags || '未定'}`,
+          },
+        ], { temperature: 0.8, max_tokens: 3000 })
+
+        let parsed: { schemes: unknown[] } | null = null
+        try {
+          const jsonMatch = designs.match(/\{[\s\S]*\}/)
+          if (jsonMatch) parsed = JSON.parse(jsonMatch[0])
+        } catch {
+          // ignore
+        }
+
+        return {
+          success: true,
+          data: { schemes: parsed?.schemes || designs },
+          label: '3个金手指方案已生成',
+        }
+      }
+
+      // ── 创作方向顾问（网文创作技能） ──
+      case 'creative_consultation': {
+        const genreGuide = await getSkillReference('genre-guide')
+        const genreSection = genreGuide
+          ? `\n\n参考类型指南：\n${genreGuide.slice(0, 3000)}`
+          : ''
+
+        const consultation = await chat([
+          {
+            role: 'system',
+            content: `你是网文创作方向顾问。用户需求模糊，需要你推荐3个差异化的创作方向。
+${genreSection}
+
+要求：
+1. 3个方向必须来自不同大类（玄幻仙侠/都市现实/悬疑推理/历史军事/科幻末世），形成体验反差
+2. 每个方向包含：类型名（含子类）、为什么适合、核心卖点、金手指方向、3-5个体验关键词、可选代表作
+3. 风格：顾问式重述用户需求 → 推荐3个方向 → 每个方向100-150字介绍
+
+输出JSON格式：
+{
+  "understanding": "对用户需求的理解",
+  "directions": [
+    {
+      "genre": "类型名·子类",
+      "reason": "为什么适合",
+      "sellingPoint": "核心卖点",
+      "goldenFingerHint": "金手指方向",
+      "keywords": ["关键词1", "关键词2", "关键词3"],
+      "referenceWork": "参考作品（可选）"
+    }
+  ]
+}
+
+直接输出JSON。`,
+          },
+          {
+            role: 'user',
+            content: '用户还没有明确创作方向，请推荐3个差异化方向。',
+          },
+        ], { temperature: 0.8, max_tokens: 3000 })
+
+        let parsed: { understanding: string; directions: unknown[] } | null = null
+        try {
+          const jsonMatch = consultation.match(/\{[\s\S]*\}/)
+          if (jsonMatch) parsed = JSON.parse(jsonMatch[0])
+        } catch {
+          // ignore
+        }
+
+        return {
+          success: true,
+          data: parsed || { understanding: '', directions: [], raw: consultation },
+          label: '3个创作方向已推荐',
+        }
+      }
+
       default:
         return { success: false, error: `未知工具: ${toolName}`, label: '工具执行失败' }
     }
@@ -549,7 +943,7 @@ ${beatsInfo || '暂无'}`,
 
 // ─── Build System Prompt ─────────────────────────────────────────────────────
 
-function buildSystemPrompt(project: {
+async function buildSystemPrompt(project: {
   title: string
   synopsis: string | null
   goldenFinger: string | null
@@ -609,6 +1003,9 @@ function buildSystemPrompt(project: {
   const stateDesc = missingItems.length > 0
     ? `⚠️ 当前缺失：${missingItems.join('、')}`
     : '✅ 项目设定较为完善'
+
+  // Load skill context
+  const skillContext = await buildSkillContextForHermes()
 
   return `你是 Hermes（赫尔墨斯），NovelCraft Architect Pro 的 AI 创作顾问与引导者。你不仅是聊天伙伴，更是可以**主动执行创作操作**的智能代理。
 
@@ -677,8 +1074,11 @@ ${chaptersInfo}
 
 ${stateDesc}
 
+${skillContext}
+
 ---
-请基于以上项目信息与用户对话。当用户需要创作操作时，主动调用工具执行。作为创作引导者，请主动关注并推动创作流程。`
+请基于以上项目信息和技能框架与用户对话。当用户需要创作操作时，主动调用工具执行。作为创作引导者，请主动关注并推动创作流程。
+当用户提到拆文、仿写、素材、类型模板、金手指设计、节奏把控等关键词时，请充分发挥你的网文创作技能，embody对应的专家角色。`
 }
 
 // ─── Parse tool calls from AI response ───────────────────────────────────────
