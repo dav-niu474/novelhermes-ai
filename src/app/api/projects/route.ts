@@ -9,7 +9,8 @@ export async function GET() {
     return NextResponse.json(projects)
   } catch (error) {
     console.error('Failed to fetch projects:', error)
-    return NextResponse.json({ error: 'Failed to fetch projects' }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Failed to fetch projects'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
@@ -29,13 +30,32 @@ export async function POST(request: Request) {
       include: {
         characters: true,
         worldRules: true,
-        volumes: true,
-        plotLines: true,
+        volumes: {
+          include: {
+            stages: {
+              include: {
+                units: {
+                  include: {
+                    chapters: { orderBy: { order: 'asc' } },
+                  },
+                  orderBy: { order: 'asc' },
+                },
+              },
+              orderBy: { order: 'asc' },
+            },
+          },
+          orderBy: { order: 'asc' },
+        },
+        plotLines: {
+          include: { plotPoints: { orderBy: { order: 'asc' } } },
+          orderBy: { order: 'asc' },
+        },
       },
     })
     return NextResponse.json(project)
   } catch (error) {
     console.error('Failed to create project:', error)
-    return NextResponse.json({ error: 'Failed to create project' }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Failed to create project'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
