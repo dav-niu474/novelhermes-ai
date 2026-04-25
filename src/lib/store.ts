@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { NovelProject, AppTab } from './types'
+import type { NovelProject, AppTab, HermesMessage } from './types'
 
 interface AppState {
   // 当前活跃Tab
@@ -28,6 +28,16 @@ interface AppState {
 
   // 更新项目局部数据
   updateProjectData: (data: Partial<NovelProject>) => void
+
+  // Hermes Agent
+  hermesOpen: boolean
+  setHermesOpen: (open: boolean) => void
+  toggleHermesOpen: () => void
+  hermesMessages: HermesMessage[]
+  addHermesMessage: (message: HermesMessage) => void
+  clearHermesMessages: () => void
+  hermesLoading: boolean
+  setHermesLoading: (loading: boolean) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -55,4 +65,15 @@ export const useAppStore = create<AppState>((set) => ({
         ? { ...state.currentProject, ...data }
         : null,
     })),
+
+  // Hermes Agent state
+  hermesOpen: false,
+  setHermesOpen: (open) => set({ hermesOpen: open }),
+  toggleHermesOpen: () => set((state) => ({ hermesOpen: !state.hermesOpen })),
+  hermesMessages: [],
+  addHermesMessage: (message) =>
+    set((state) => ({ hermesMessages: [...state.hermesMessages, message] })),
+  clearHermesMessages: () => set({ hermesMessages: [] }),
+  hermesLoading: false,
+  setHermesLoading: (loading) => set({ hermesLoading: loading }),
 }))

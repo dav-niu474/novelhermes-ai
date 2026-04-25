@@ -42,3 +42,46 @@ Stage Summary:
 - ✅ 深色/浅色主题切换已完成
 - ✅ Lint 完全通过 (0 errors, 0 warnings)
 - ✅ 开发服务器正常运行
+
+---
+Task ID: 2
+Agent: Main
+Task: 集成 Hermes Agent 能力
+
+Work Log:
+- 创建 Hermes Agent 后端 API 路由 (/api/ai/hermes/route.ts)
+  - 基于 z-ai-web-dev-sdk 的 LLM 对话接口
+  - 构建完整项目上下文的系统提示词（书名、简介、金手指、世界观、角色、世界规则、章节概览）
+  - 支持多轮对话历史（限制最近20条消息避免上下文溢出）
+  - Hermes 角色设定：希腊信使之神，创作顾问+灵感激发+一致性守护
+- 扩展类型定义 (src/lib/types.ts)
+  - 新增 HermesMessage 接口 (id, role, content, timestamp)
+  - 新增 HermesConversation 接口
+- 扩展 Zustand Store (src/lib/store.ts)
+  - 新增 hermesOpen/setHermesOpen/toggleHermesOpen 状态
+  - 新增 hermesMessages/addHermesMessage/clearHermesMessages 对话消息管理
+  - 新增 hermesLoading/setHermesLoading 加载状态
+- 构建 HermesAgent 前端组件 (src/components/novelcraft/HermesAgent.tsx)
+  - 聊天面板 UI（消息气泡、用户/助手头像、时间戳）
+  - 快捷操作按钮（灵感瓶颈/一致性检查/情节发展/角色深化）
+  - 欢迎屏幕（无消息时显示）
+  - 加载动画（思考中+弹跳点）
+  - Markdown 格式化（加粗文本渲染）
+  - Enter 发送/Shift+Enter 换行
+  - 无项目时的空状态提示
+- 集成到主页面 (src/app/page.tsx)
+  - 桌面端：右侧可展开/收起的侧边面板（380px宽）
+  - 移动端：全屏覆盖面板 + 关闭按钮
+  - 导航栏 Hermes 切换按钮（桌面+移动）
+  - 右下角浮动按钮（面板关闭时显示，带脉冲动画）
+  - 专注模式下自动隐藏 Hermes 面板和浮动按钮
+  - 平滑过渡动画
+
+Stage Summary:
+- ✅ Hermes Agent 后端 API 已完成并通过测试（AI能识别项目上下文并回应）
+- ✅ 类型定义和状态管理已扩展
+- ✅ 聊天组件 UI 已完成
+- ✅ 主页面集成已完成（侧边面板+浮动按钮）
+- ✅ Lint 通过（0 errors）
+- ✅ 开发服务器正常运行
+- ✅ API 实测成功：Hermes 能正确引用项目设定进行对话

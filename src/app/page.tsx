@@ -9,6 +9,7 @@ import SparkLab from '@/components/novelcraft/SparkLab'
 import ArchitectureBoard from '@/components/novelcraft/ArchitectureBoard'
 import OutlineEngine from '@/components/novelcraft/OutlineEngine'
 import WritingSpace from '@/components/novelcraft/WritingSpace'
+import HermesAgent from '@/components/novelcraft/HermesAgent'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -37,8 +38,11 @@ import {
   Plus,
   FolderOpen,
   Trash2,
+  MessageSquare,
+  X,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
+import { cn } from '@/lib/utils'
 
 // Tab config
 const TABS: { key: AppTab; label: string; icon: React.ReactNode }[] = [
@@ -57,6 +61,9 @@ export default function Home() {
     projects,
     setProjects,
     focusMode,
+    hermesOpen,
+    setHermesOpen,
+    toggleHermesOpen,
   } = useAppStore()
 
   const { theme, setTheme } = useTheme()
@@ -149,7 +156,7 @@ export default function Home() {
     <div className="flex flex-col h-screen bg-background">
       {/* ===== Top Navigation Bar ===== */}
       {!isWritingFocus && (
-        <header className="shrink-0 border-b bg-background/95 backdrop-blur-sm supports-[backdrop-filter]:bg-background/60">
+        <header className="shrink-0 border-b bg-background/95 backdrop-blur-sm supports-[backdrop-filter]:bg-background/60 z-20">
           <div className="flex items-center h-14 px-4 gap-3">
             {/* Logo */}
             <div className="flex items-center gap-2 mr-2">
@@ -240,6 +247,27 @@ export default function Home() {
               ))}
             </nav>
 
+            {/* Hermes Toggle (Desktop) */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={hermesOpen ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={toggleHermesOpen}
+                  className={cn(
+                    'gap-1.5 text-xs transition-all',
+                    hermesOpen
+                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <MessageSquare className="size-4" />
+                  <span className="hidden lg:inline">Hermes</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{hermesOpen ? '关闭 Hermes' : '打开 Hermes 创作顾问'}</TooltipContent>
+            </Tooltip>
+
             {/* Theme Toggle */}
             <Tooltip>
               <TooltipTrigger asChild>
@@ -274,7 +302,7 @@ export default function Home() {
 
       {/* ===== Mobile Tab Bar ===== */}
       {!isWritingFocus && (
-        <div className="md:hidden shrink-0 border-b bg-background/95">
+        <div className="md:hidden shrink-0 border-b bg-background/95 z-20">
           <div className="flex items-center h-11 px-1">
             {TABS.map((tab) => (
               <button
@@ -290,20 +318,79 @@ export default function Home() {
                 <span className="text-[10px] font-medium">{tab.label}</span>
               </button>
             ))}
+            {/* Hermes tab on mobile */}
+            <button
+              onClick={toggleHermesOpen}
+              className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 transition-colors ${
+                hermesOpen
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-muted-foreground'
+              }`}
+            >
+              <MessageSquare className="size-4" />
+              <span className="text-[10px] font-medium">Hermes</span>
+            </button>
           </div>
         </div>
       )}
 
-      {/* ===== Main Content ===== */}
-      <main className={`flex-1 overflow-auto ${isWritingFocus ? '' : 'p-0'}`}>
-        <div className={isWritingFocus ? 'h-full' : 'h-full'}>
-          {renderContent()}
+      {/* ===== Main Content Area (with Hermes side panel) ===== */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Main content */}
+        <main className={cn('flex-1 overflow-auto min-w-0', isWritingFocus ? '' : 'p-0')}>
+          <div className={isWritingFocus ? 'h-full' : 'h-full'}>
+            {renderContent()}
+          </div>
+        </main>
+
+        {/* Hermes Side Panel */}
+        <div
+          className={cn(
+            'shrink-0 border-l bg-background transition-all duration-300 overflow-hidden',
+            'w-0 opacity-0',
+            hermesOpen && !isWritingFocus && 'w-[380px] opacity-100',
+            // Mobile: full overlay
+            'max-md:fixed max-md:inset-0 max-md:w-full max-md:border-0 max-md:z-50',
+            hermesOpen && !isWritingFocus ? 'max-md:opacity-100' : 'max-md:opacity-0 max-md:pointer-events-none'
+          )}
+        >
+          {/* Mobile close button overlay */}
+          <div className="md:hidden absolute top-2 right-2 z-10">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 bg-background/80 backdrop-blur-sm"
+              onClick={() => setHermesOpen(false)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+          <HermesAgent />
         </div>
-      </main>
+      </div>
+
+      {/* ===== Floating Hermes Button (when panel is closed) ===== */}
+      {!hermesOpen && !isWritingFocus && currentProject && (
+        <div className="fixed bottom-6 right-6 z-30">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                onClick={toggleHermesOpen}
+                className="size-12 rounded-full shadow-lg shadow-amber-500/20 bg-gradient-to-br from-emerald-500 to-amber-500 hover:from-emerald-600 hover:to-amber-600 text-white transition-all hover:scale-105 active:scale-95"
+              >
+                <MessageSquare className="size-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="left">召唤 Hermes 创作顾问</TooltipContent>
+          </Tooltip>
+          {/* Pulse ring */}
+          <span className="absolute inset-0 rounded-full animate-ping bg-amber-500/20 pointer-events-none" />
+        </div>
+      )}
 
       {/* ===== Footer ===== */}
       {!isWritingFocus && (
-        <footer className="shrink-0 border-t bg-background/80 backdrop-blur-sm">
+        <footer className="shrink-0 border-t bg-background/80 backdrop-blur-sm z-10">
           <div className="flex items-center justify-between h-8 px-4 text-[11px] text-muted-foreground">
             <div className="flex items-center gap-3">
               <span>NovelCraft Architect Pro</span>

@@ -69,6 +69,22 @@ export const BEAT_TYPE_COLORS: Record<BeatType, string> = {
   suspense: 'bg-purple-500',
 }
 
+// ===== Hermes Agent Types =====
+
+export interface HermesMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: string
+}
+
+export interface HermesConversation {
+  projectId: string
+  messages: HermesMessage[]
+}
+
+// ===== App Tab Types =====
+
 export type AppTab = 'spark' | 'architecture' | 'outline' | 'writing'
 
 export const TAB_LABELS: Record<AppTab, string> = {
