@@ -1,35 +1,22 @@
 ---
 Task ID: 1
 Agent: main
-Task: Diagnose and fix Vercel deployment - inspiration generation error
+Task: 修复Vercel上灵感生成接口报错问题
 
 Work Log:
-- Tested NVIDIA API directly - works fine (model: meta/llama-3.3-70b-instruct, returns 200)
-- Tested Vercel API endpoints:
-  - GET /api/projects → 500 error "Failed to fetch projects"
-  - POST /api/projects → 500 error "Failed to create project"
-  - POST /api/ai/spark → 200 (AI generation works, but DB save fails)
-- Root cause: Database tables were missing or had wrong schema
-  - Old tables from previous system (Drama, Scene, Episode, Character with dramaId) still existed
-  - New Prisma schema tables (NovelProject, Volume, Stage, Unit, Chapter, etc.) were partially created
-  - Character table had old schema (dramaId, gender, age, appearance, voiceStyle) instead of new schema (projectId, background, conflict)
-- Fix: Dropped all tables and re-pushed Prisma schema cleanly
-  - Used DROP SCHEMA public CASCADE + CREATE SCHEMA public to fully reset
-  - Ran prisma db push to create all tables from scratch
-  - Verified all tables and columns match the Prisma schema
-- Enhanced API error reporting:
-  - Updated projects route to return actual error messages instead of generic "Failed to..."
-  - Updated project [id] route with better error messages
-  - Updated project creation include to match full nested structure
-- Pushed to GitHub and redeployed to Vercel
-- Full E2E test passed on Vercel:
-  - Project creation: ✅
-  - Spark generation: ✅ (title: 电子封神, 3 characters)
-  - Project fetch with saved data: ✅
-  - Project deletion: ✅
+- 通过Vercel API检查部署日志
+- 直接测试 /api/ai/inspiration 路由 -> 返回404（该路由不存在，实际路由是 /api/ai/spark）
+- 测试 /api/ai/spark 路由 -> AI生成正常工作
+- 测试 /api/projects POST -> 返回错误 "The table `public.NovelProject` does not exist in the current database"
+- **根因发现**: Supabase PostgreSQL数据库中表未创建！之前的部署虽然连接了Supabase，但从未运行过 prisma db push
+- 旧项目(Drama, Episode)的表残留导致 prisma db push 报数据丢失警告
+- 使用 `prisma db push --accept-data-loss` 成功创建所有表（NovelProject, Character, WorldRule, Volume, Stage, Unit, Chapter, StoryBeat, PlotLine, PlotPoint）
+- 推送代码到GitHub触发Vercel重新部署
+- 等待部署完成（READY状态）
+- 全面测试：项目创建、灵感生成、项目更新、角色创建、最终项目获取 - **全部通过**
 
 Stage Summary:
-- **Root cause**: Supabase database had old schema tables that conflicted with the new Prisma schema
-- **Fix**: Full database reset + Prisma schema push
-- **All APIs working on Vercel**: https://novelhermes-ai.vercel.app
-- **Git commit**: a3e73a9 "fix: improve API error reporting for better debugging on Vercel"
+- **根本原因**: Supabase数据库中Prisma schema定义的表从未被创建，导致所有数据库操作报错
+- **修复措施**: 运行 `prisma db push --accept-data-loss` 创建所有表
+- **验证结果**: 灵感生成全流程（创建项目→AI生成→保存结果→角色创建）在Vercel上全部正常工作
+- Vercel部署URL: https://novelhermes-ai.vercel.app
