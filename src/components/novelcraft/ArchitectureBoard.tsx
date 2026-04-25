@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
 import type { Character, WorldRule } from '@/lib/types'
+import type { AdoptTarget } from '@/lib/store'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -12,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Dialog,
   DialogContent,
@@ -52,6 +54,12 @@ import {
   FileText,
   GitBranch,
   ArrowRight,
+  Loader2,
+  Wand2,
+  Check,
+  Star,
+  Flame,
+  Zap,
 } from 'lucide-react'
 
 // ===== Role Badge Colors =====
@@ -76,6 +84,13 @@ const CATEGORY_DEFAULT = 'border-l-gray-400'
 
 const CATEGORY_OPTIONS = ['基础规则', '力量体系', '社会结构', '地理环境', '历史设定']
 
+// ===== AI Character Suggestion Card Colors =====
+const ROLE_CARD_STYLES: Record<string, { bg: string; border: string; text: string; icon: React.ReactNode }> = {
+  主角: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-600 dark:text-amber-400', icon: <Star className="size-3.5" /> },
+  反派: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-600 dark:text-rose-400', icon: <Flame className="size-3.5" /> },
+  配角: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-600 dark:text-purple-400', icon: <Zap className="size-3.5" /> },
+}
+
 // ===== Refresh project helper =====
 async function refreshProject(projectId: string): Promise<void> {
   const res = await fetch(`/api/projects/${projectId}`)
@@ -83,20 +98,27 @@ async function refreshProject(projectId: string): Promise<void> {
     const data = await res.json()
     const store = useAppStore.getState()
     store.setCurrentProject(data)
-    // Also update in projects list
     const { projects } = store
     store.setProjects(projects.map(p => (p.id === data.id ? data : p)))
   }
 }
 
 // ====================================================================
-// Character Dialog (Add / Edit)
+// Character Dialog (Add / Edit) with AI Generation
 // ====================================================================
 interface CharacterDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  character: Character | null // null = adding new
+  character: Character | null
   projectId: string
+}
+
+interface AICharacterOption {
+  name: string
+  role: string
+  personality: string
+  background: string
+  conflict: string
 }
 
 function CharacterDialog({ open, onOpenChange, character, projectId }: CharacterDialogProps) {
@@ -108,28 +130,31 @@ function CharacterDialog({ open, onOpenChange, character, projectId }: Character
   const [conflict, setConflict] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // Sync state when dialog opens or character changes
-  const syncState = useCallback(() => {
-    if (character) {
-      setName(character.name)
-      setRole(character.role)
-      setPersonality(character.personality ?? '')
-      setBackground(character.background ?? '')
-      setConflict(character.conflict ?? '')
-    } else {
-      setName('')
-      setRole('主角')
-      setPersonality('')
-      setBackground('')
-      setConflict('')
-    }
-  }, [character])
+  // AI generation state
+  const [aiOptions, setAiOptions] = useState<AICharacterOption[] | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [selectedAiIndex, setSelectedAiIndex] = useState<number | null>(null)
 
-  // Reset on open
-  const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) syncState()
-    onOpenChange(nextOpen)
-  }
+  // Sync state when dialog opens or character changes
+  useEffect(() => {
+    if (open) {
+      if (character) {
+        setName(character.name)
+        setRole(character.role)
+        setPersonality(character.personality ?? '')
+        setBackground(character.background ?? '')
+        setConflict(character.conflict ?? '')
+      } else {
+        setName('')
+        setRole('主角')
+        setPersonality('')
+        setBackground('')
+        setConflict('')
+      }
+      setAiOptions(null)
+      setSelectedAiIndex(null)
+    }
+  }, [open, character])
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -164,15 +189,118 @@ function CharacterDialog({ open, onOpenChange, character, projectId }: Character
     }
   }
 
+  // AI character generation
+  const handleAIGenerate = async (targetRole?: string) => {
+    setAiLoading(true)
+    setAiOptions(null)
+    setSelectedAiIndex(null)
+    try {
+      const res = await fetch('/api/ai/character-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, roleType: targetRole || '任意' }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error || 'AI生成失败')
+        return
+      }
+      if (data.characters && Array.isArray(data.characters)) {
+        setAiOptions(data.characters)
+      } else {
+        toast.error('AI返回格式异常，请重试')
+      }
+    } catch {
+      toast.error('AI角色生成失败，请重试')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  // Select an AI option to auto-fill
+  const handleSelectAIOption = (index: number) => {
+    const option = aiOptions![index]
+    setName(option.name || '')
+    setRole(option.role || '主角')
+    setPersonality(option.personality || '')
+    setBackground(option.background || '')
+    setConflict(option.conflict || '')
+    setSelectedAiIndex(index)
+  }
+
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEdit ? '编辑角色' : '添加角色'}</DialogTitle>
           <DialogDescription>
-            {isEdit ? '修改角色的详细信息' : '为项目添加新角色'}
+            {isEdit ? '修改角色的详细信息' : '为项目添加新角色，也可以让AI生成方案'}
           </DialogDescription>
         </DialogHeader>
+
+        {/* AI Generation Section */}
+        {!isEdit && (
+          <div className="border rounded-lg p-3 bg-muted/20">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Wand2 className="size-4 text-emerald-500" />
+                <span className="text-sm font-medium">AI 生成角色方案</span>
+              </div>
+              <div className="flex gap-1.5">
+                {['主角', '反派', '配角', '任意'].map((targetRole) => (
+                  <Button
+                    key={targetRole}
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[10px] px-2"
+                    onClick={() => handleAIGenerate(targetRole === '任意' ? undefined : targetRole)}
+                    disabled={aiLoading}
+                  >
+                    {aiLoading ? <Loader2 className="size-3 animate-spin" /> : null}
+                    {targetRole}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            {/* AI Options Display */}
+            {aiOptions && aiOptions.length > 0 && (
+              <div className="grid gap-2 mt-2">
+                <p className="text-xs text-muted-foreground">选择一个方案一键填写，或自由修改：</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {aiOptions.map((opt, i) => {
+                    const roleStyle = ROLE_CARD_STYLES[opt.role] || ROLE_CARD_STYLES['配角']
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => handleSelectAIOption(i)}
+                        className={`text-left rounded-lg border p-3 transition-all ${
+                          selectedAiIndex === i
+                            ? `ring-2 ring-emerald-500 ${roleStyle.bg} ${roleStyle.border}`
+                            : 'border-border/50 hover:border-border hover:bg-muted/30'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <span className={roleStyle.text}>{roleStyle.icon}</span>
+                          <span className="font-medium text-sm">{opt.name}</span>
+                          <Badge variant="outline" className={`text-[9px] px-1 py-0 ml-auto ${roleStyle.text} ${roleStyle.border}`}>
+                            {opt.role}
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground line-clamp-2">{opt.personality}</p>
+                        {opt.conflict && (
+                          <p className="text-[10px] text-rose-500/70 line-clamp-1 mt-1">⚔ {opt.conflict}</p>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Form Fields */}
         <div className="grid gap-4 py-2">
           <div className="grid gap-2">
             <Label htmlFor="char-name">角色名称 *</Label>
@@ -248,7 +376,7 @@ function CharacterDialog({ open, onOpenChange, character, projectId }: Character
 interface WorldRuleDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  rule: WorldRule | null // null = adding new
+  rule: WorldRule | null
   projectId: string
 }
 
@@ -259,22 +387,19 @@ function WorldRuleDialog({ open, onOpenChange, rule, projectId }: WorldRuleDialo
   const [content, setContent] = useState('')
   const [saving, setSaving] = useState(false)
 
-  const syncState = useCallback(() => {
-    if (rule) {
-      setCategory(rule.category)
-      setTitle(rule.title)
-      setContent(rule.content)
-    } else {
-      setCategory('基础规则')
-      setTitle('')
-      setContent('')
+  useEffect(() => {
+    if (open) {
+      if (rule) {
+        setCategory(rule.category)
+        setTitle(rule.title)
+        setContent(rule.content)
+      } else {
+        setCategory('基础规则')
+        setTitle('')
+        setContent('')
+      }
     }
-  }, [rule])
-
-  const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) syncState()
-    onOpenChange(nextOpen)
-  }
+  }, [open, rule])
 
   const handleSave = async () => {
     if (!title.trim()) {
@@ -314,7 +439,7 @@ function WorldRuleDialog({ open, onOpenChange, rule, projectId }: WorldRuleDialo
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEdit ? '编辑世界规则' : '添加世界规则'}</DialogTitle>
@@ -384,6 +509,8 @@ interface InlineEditFieldProps {
   multiline?: boolean
   projectId: string
   field: string
+  adoptValue?: string  // Value from Hermes adopt
+  onAdoptConsumed?: () => void
 }
 
 function InlineEditField({
@@ -394,10 +521,20 @@ function InlineEditField({
   multiline = false,
   projectId,
   field,
+  adoptValue,
+  onAdoptConsumed,
 }: InlineEditFieldProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
   const [saving, setSaving] = useState(false)
+
+  // Handle adopt from Hermes
+  useEffect(() => {
+    if (adoptValue && adoptValue !== value) {
+      setDraft(adoptValue)
+      setEditing(true)
+    }
+  }, [adoptValue, value])
 
   const startEdit = () => {
     setDraft(value)
@@ -407,6 +544,7 @@ function InlineEditField({
   const cancelEdit = () => {
     setDraft(value)
     setEditing(false)
+    onAdoptConsumed?.()
   }
 
   const saveEdit = async () => {
@@ -425,6 +563,7 @@ function InlineEditField({
       await refreshProject(projectId)
       toast.success(`${label}已更新`)
       setEditing(false)
+      onAdoptConsumed?.()
     } catch {
       toast.error('更新失败，请重试')
     } finally {
@@ -504,10 +643,7 @@ function TagsEditor({ value, projectId }: TagsEditorProps) {
   const [saving, setSaving] = useState(false)
 
   const tags = value
-    ? value
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean)
+    ? value.split(',').map((t) => t.trim()).filter(Boolean)
     : []
 
   const startEdit = () => {
@@ -602,7 +738,7 @@ function TagsEditor({ value, projectId }: TagsEditorProps) {
 // Main: ArchitectureBoard
 // ====================================================================
 export default function ArchitectureBoard() {
-  const { currentProject, setActiveTab } = useAppStore()
+  const { currentProject, setActiveTab, pendingAdopt, consumeAdopt } = useAppStore()
 
   // Character dialog state
   const [charDialogOpen, setCharDialogOpen] = useState(false)
@@ -615,6 +751,66 @@ export default function ArchitectureBoard() {
   // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'character' | 'worldRule'; id: string; name: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Adopt state from Hermes
+  const [adoptedField, setAdoptedField] = useState<string | null>(null)
+  const [adoptedValue, setAdoptedValue] = useState<string | undefined>(undefined)
+
+  // Handle adopt from Hermes
+  useEffect(() => {
+    if (!pendingAdopt) return
+    if (pendingAdopt.type === 'project_field') {
+      const target = pendingAdopt as Extract<AdoptTarget, { type: 'project_field' }>
+      setAdoptedField(target.field)
+      setAdoptedValue(target.value)
+      consumeAdopt()
+      toast.success('已采纳Hermes的建议，请确认后保存')
+    } else if (pendingAdopt.type === 'character') {
+      const target = pendingAdopt as Extract<AdoptTarget, { type: 'character' }>
+      // Open character dialog with pre-filled data
+      setEditingChar(null)
+      setCharDialogOpen(true)
+      consumeAdopt()
+      // We'll handle this differently - create the character directly
+      handleCreateCharacterFromAdopt(target.character)
+    } else if (pendingAdopt.type === 'world_rule') {
+      const target = pendingAdopt as Extract<AdoptTarget, { type: 'world_rule' }>
+      consumeAdopt()
+      handleCreateWorldRuleFromAdopt(target.rule)
+    }
+  }, [pendingAdopt, consumeAdopt])
+
+  const handleCreateCharacterFromAdopt = async (charData: { name: string; role: string; personality: string; background: string; conflict: string }) => {
+    if (!currentProject) return
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/characters`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(charData),
+      })
+      if (!res.ok) throw new Error()
+      await refreshProject(currentProject.id)
+      toast.success(`角色「${charData.name}」已采纳并创建`)
+    } catch {
+      toast.error('采纳角色失败，请重试')
+    }
+  }
+
+  const handleCreateWorldRuleFromAdopt = async (ruleData: { category: string; title: string; content: string }) => {
+    if (!currentProject) return
+    try {
+      const res = await fetch(`/api/projects/${currentProject.id}/world-rules`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ruleData),
+      })
+      if (!res.ok) throw new Error()
+      await refreshProject(currentProject.id)
+      toast.success(`世界规则「${ruleData.title}」已采纳并创建`)
+    } catch {
+      toast.error('采纳世界规则失败，请重试')
+    }
+  }
 
   // ---- Character actions ----
   const openAddCharacter = () => {
@@ -721,7 +917,6 @@ export default function ArchitectureBoard() {
   const sortedCategories = Object.keys(rulesByCategory).sort((a, b) => {
     const ai = CATEGORY_OPTIONS.indexOf(a)
     const bi = CATEGORY_OPTIONS.indexOf(b)
-    // Known categories first, then alphabetically
     if (ai !== -1 && bi !== -1) return ai - bi
     if (ai !== -1) return -1
     if (bi !== -1) return 1
@@ -743,7 +938,7 @@ export default function ArchitectureBoard() {
         </div>
       </div>
 
-      {/* ── Workflow Progress Banner ── */}
+      {/* Workflow Progress Banner */}
       <Card className="mb-6 border-border/50">
         <CardContent className="py-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
@@ -753,14 +948,12 @@ export default function ArchitectureBoard() {
                 <span className="text-sm text-muted-foreground">{completedSteps}/{totalSteps}</span>
                 <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">{progressPercent}%</span>
               </div>
-              {/* Progress bar */}
               <div className="h-2 rounded-full bg-muted overflow-hidden">
                 <div
                   className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-purple-500 transition-all duration-500"
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
-              {/* Step indicators */}
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {workflowSteps.map((step) => (
                   <span
@@ -776,8 +969,6 @@ export default function ArchitectureBoard() {
                 ))}
               </div>
             </div>
-
-            {/* Navigate to Outline Engine */}
             <Button
               onClick={() => setActiveTab('outline')}
               disabled={!isArchitectureReady}
@@ -800,11 +991,11 @@ export default function ArchitectureBoard() {
         </CardContent>
       </Card>
 
-      {/* Two-column layout on desktop, single column on mobile */}
+      {/* Two-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        {/* ====== Left Column: Project Settings + Characters ====== */}
+        {/* Left Column */}
         <div className="lg:col-span-3 flex flex-col gap-6">
-          {/* ---- Project Settings Card ---- */}
+          {/* Project Settings Card */}
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">
@@ -821,6 +1012,8 @@ export default function ArchitectureBoard() {
                 placeholder="输入书名..."
                 projectId={project.id}
                 field="title"
+                adoptValue={adoptedField === 'title' ? adoptedValue : undefined}
+                onAdoptConsumed={() => { setAdoptedField(null); setAdoptedValue(undefined) }}
               />
               <Separator />
               <InlineEditField
@@ -831,6 +1024,8 @@ export default function ArchitectureBoard() {
                 multiline
                 projectId={project.id}
                 field="synopsis"
+                adoptValue={adoptedField === 'synopsis' ? adoptedValue : undefined}
+                onAdoptConsumed={() => { setAdoptedField(null); setAdoptedValue(undefined) }}
               />
               <Separator />
               <InlineEditField
@@ -841,6 +1036,8 @@ export default function ArchitectureBoard() {
                 multiline
                 projectId={project.id}
                 field="goldenFinger"
+                adoptValue={adoptedField === 'goldenFinger' ? adoptedValue : undefined}
+                onAdoptConsumed={() => { setAdoptedField(null); setAdoptedValue(undefined) }}
               />
               <Separator />
               <InlineEditField
@@ -851,13 +1048,15 @@ export default function ArchitectureBoard() {
                 multiline
                 projectId={project.id}
                 field="worldBackground"
+                adoptValue={adoptedField === 'worldBackground' ? adoptedValue : undefined}
+                onAdoptConsumed={() => { setAdoptedField(null); setAdoptedValue(undefined) }}
               />
               <Separator />
               <TagsEditor value={project.tags ?? ''} projectId={project.id} />
             </CardContent>
           </Card>
 
-          {/* ---- Characters Card ---- */}
+          {/* Characters Card */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -868,10 +1067,12 @@ export default function ArchitectureBoard() {
                     {characters.length}
                   </Badge>
                 </div>
-                <Button size="sm" onClick={openAddCharacter}>
-                  <Plus className="size-4" />
-                  添加角色
-                </Button>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={openAddCharacter} className="gap-1">
+                    <Plus className="size-4" />
+                    添加角色
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -882,8 +1083,17 @@ export default function ArchitectureBoard() {
                   </div>
                   <p className="text-muted-foreground text-sm">尚未添加角色</p>
                   <p className="text-muted-foreground text-xs">
-                    点击上方按钮添加你的第一个角色
+                    点击上方按钮手动添加，或让AI生成角色方案
                   </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 mt-1"
+                    onClick={openAddCharacter}
+                  >
+                    <Wand2 className="size-3.5 text-emerald-500" />
+                    AI生成角色
+                  </Button>
                 </div>
               ) : (
                 <div className="grid gap-4 max-h-[600px] overflow-y-auto pr-1 custom-scrollbar">
@@ -954,7 +1164,7 @@ export default function ArchitectureBoard() {
           </Card>
         </div>
 
-        {/* ====== Right Column: World Rules ====== */}
+        {/* Right Column: World Rules */}
         <div className="lg:col-span-2">
           <Card className="lg:sticky lg:top-6">
             <CardHeader>
@@ -1059,7 +1269,7 @@ export default function ArchitectureBoard() {
         </div>
       </div>
 
-      {/* ====== Character Dialog ====== */}
+      {/* Dialogs */}
       <CharacterDialog
         open={charDialogOpen}
         onOpenChange={setCharDialogOpen}
@@ -1067,7 +1277,6 @@ export default function ArchitectureBoard() {
         projectId={project.id}
       />
 
-      {/* ====== World Rule Dialog ====== */}
       <WorldRuleDialog
         open={ruleDialogOpen}
         onOpenChange={setRuleDialogOpen}
@@ -1075,7 +1284,7 @@ export default function ArchitectureBoard() {
         projectId={project.id}
       />
 
-      {/* ====== Delete Confirmation ====== */}
+      {/* Delete Confirmation */}
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
@@ -1109,9 +1318,8 @@ export default function ArchitectureBoard() {
                   handleDeleteRule(deleteTarget.id)
                 }
               }}
-              className="bg-destructive text-white hover:bg-destructive/90"
             >
-              {deleting ? '删除中...' : '删除'}
+              {deleting ? '删除中...' : '确认删除'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

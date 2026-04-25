@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useAppStore } from '@/lib/store'
 import type { Chapter, BeatType } from '@/lib/types'
 import { BEAT_TYPE_LABELS, BEAT_TYPE_COLORS } from '@/lib/types'
+import type { AdoptTarget } from '@/lib/store'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { cn } from '@/lib/utils'
 
@@ -23,6 +24,11 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 
 import {
   FileText,
@@ -42,13 +48,19 @@ import {
   ListTree,
   PanelLeftClose,
   PanelLeftOpen,
+  Wand2,
+  MessageCircle,
+  Lightbulb,
+  ArrowRight,
+  Copy,
+  RotateCcw,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function countWords(text: string): number {
   if (!text || text.trim() === '') return 0
-  // Count Chinese characters + English words
   const chineseChars = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length
   const englishWords = text
     .replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, ' ')
@@ -88,6 +100,15 @@ const BEAT_TEXT_COLORS: Record<BeatType, string> = {
 // ─── Save Status ─────────────────────────────────────────────────────────────
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+
+// ─── AI Writing Assist Mode ──────────────────────────────────────────────────
+
+type AIAssistMode = 'continue' | 'rewrite' | 'suggest' | 'dialogue'
+
+interface SuggestionItem {
+  title: string
+  desc: string
+}
 
 // ─── Left Sidebar: Chapter Directory ─────────────────────────────────────────
 
@@ -211,7 +232,6 @@ function ChapterReference({
       </div>
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-4">
-          {/* Chapter Summary */}
           {chapter.summary && (
             <div>
               <div className="flex items-center gap-1.5 mb-2">
@@ -224,7 +244,6 @@ function ChapterReference({
             </div>
           )}
 
-          {/* Story Beats */}
           {chapter.storyBeats.length > 0 && (
             <div>
               <div className="flex items-center gap-1.5 mb-2">
@@ -268,7 +287,6 @@ function ChapterReference({
             </div>
           )}
 
-          {/* Golden Finger */}
           {goldenFinger && (
             <>
               <Separator />
@@ -284,7 +302,6 @@ function ChapterReference({
             </>
           )}
 
-          {/* World Rules */}
           {worldRules.length > 0 && (
             <div>
               <div className="flex items-center gap-1.5 mb-2">
@@ -317,7 +334,6 @@ function ChapterReference({
             </div>
           )}
 
-          {/* Empty reference state */}
           {!chapter.summary && chapter.storyBeats.length === 0 && !goldenFinger && worldRules.length === 0 && (
             <div className="text-center py-8 text-muted-foreground">
               <BookOpen className="size-8 mx-auto mb-2 opacity-30" />
@@ -326,6 +342,77 @@ function ChapterReference({
           )}
         </div>
       </ScrollArea>
+    </div>
+  )
+}
+
+// ─── AI Assist Result Panel ──────────────────────────────────────────────────
+
+function AIAssistPanel({
+  result,
+  suggestions,
+  mode,
+  isLoading,
+  onApply,
+  onDiscard,
+}: {
+  result: string | null
+  suggestions: SuggestionItem[] | null
+  mode: AIAssistMode | null
+  isLoading: boolean
+  onApply: () => void
+  onDiscard: () => void
+}) {
+  if (!result && !isLoading) return null
+
+  return (
+    <div className="border-t bg-muted/30 shrink-0">
+      <div className="px-4 py-2 flex items-center gap-2 border-b bg-background/80">
+        <Wand2 className="size-3.5 text-emerald-500" />
+        <span className="text-xs font-medium text-foreground">
+          {mode === 'continue' ? 'AI 续写' :
+           mode === 'rewrite' ? 'AI 改写' :
+           mode === 'suggest' ? 'AI 建议' :
+           mode === 'dialogue' ? 'AI 对话' : 'AI 辅助'}
+        </span>
+        <div className="ml-auto flex items-center gap-1.5">
+          {result && !isLoading && (
+            <>
+              <Button variant="ghost" size="sm" className="h-6 text-[11px] gap-1 text-muted-foreground" onClick={onDiscard}>
+                <RotateCcw className="size-3" />
+                放弃
+              </Button>
+              <Button size="sm" className="h-6 text-[11px] gap-1 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={onApply}>
+                <Check className="size-3" />
+                {mode === 'rewrite' ? '替换选区' : mode === 'suggest' ? '采纳并续写' : '采纳'}
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="max-h-[250px] overflow-y-auto px-4 py-3">
+        {isLoading ? (
+          <div className="flex items-center gap-2 py-4 justify-center">
+            <Loader2 className="size-4 animate-spin text-emerald-500" />
+            <span className="text-xs text-muted-foreground">AI 正在创作中...</span>
+          </div>
+        ) : suggestions && suggestions.length > 0 ? (
+          <div className="space-y-2">
+            {suggestions.map((s, i) => (
+              <div key={i} className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+                <div className="text-xs font-medium text-emerald-600 dark:text-emerald-400">{s.title}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{s.desc}</div>
+              </div>
+            ))}
+          </div>
+        ) : result ? (
+          <div className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap font-serif"
+            style={{ fontFamily: '"Noto Serif SC", "Source Han Serif CN", "STSong", Georgia, serif' }}
+          >
+            {result}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -339,6 +426,8 @@ export default function WritingSpace() {
     setActiveChapterId,
     focusMode,
     toggleFocusMode,
+    pendingAdopt,
+    consumeAdopt,
   } = useAppStore()
 
   const isMobile = useIsMobile()
@@ -348,6 +437,14 @@ export default function WritingSpace() {
   const [content, setContent] = useState('')
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+
+  // AI assist state
+  const [aiResult, setAiResult] = useState<string | null>(null)
+  const [aiSuggestions, setAiSuggestions] = useState<SuggestionItem[] | null>(null)
+  const [aiMode, setAiMode] = useState<AIAssistMode | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [selectedText, setSelectedText] = useState('')
+  const [aiPopoverOpen, setAiPopoverOpen] = useState(false)
 
   // Refs
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -375,6 +472,22 @@ export default function WritingSpace() {
     [chapters]
   )
 
+  // ─── Handle adopt from Hermes ────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!pendingAdopt) return
+    if (pendingAdopt.type === 'chapter_content' && pendingAdopt.chapterId === activeChapterId) {
+      if (pendingAdopt.mode === 'append') {
+        setContent(prev => prev + '\n' + pendingAdopt.content)
+        toast.success('AI内容已采纳并追加')
+      } else {
+        setContent(pendingAdopt.content)
+        toast.success('AI内容已采纳')
+      }
+      consumeAdopt()
+    }
+  }, [pendingAdopt, activeChapterId, consumeAdopt])
+
   // ─── Sync local state when active chapter changes ───────────────────────
 
   useEffect(() => {
@@ -391,6 +504,10 @@ export default function WritingSpace() {
       lastSavedTitleRef.current = ''
       setSaveStatus('idle')
     }
+    // Clear AI state on chapter switch
+    setAiResult(null)
+    setAiSuggestions(null)
+    setAiMode(null)
   }, [activeChapterId])
 
   // ─── Auto-select first chapter if none selected ─────────────────────────
@@ -414,7 +531,6 @@ export default function WritingSpace() {
         })
         if (!res.ok) throw new Error('Save failed')
         setSaveStatus('saved')
-        // Reset to idle after 2 seconds
         setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 2000)
       } catch {
         setSaveStatus('error')
@@ -452,6 +568,117 @@ export default function WritingSpace() {
         clearTimeout(saveTimerRef.current)
       }
     }
+  }, [])
+
+  // ─── Get selected text from textarea ─────────────────────────────────────
+
+  const getSelectedText = useCallback(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return ''
+    const start = textarea.selectionStart
+    const end = textarea.selectionEnd
+    if (start === end) return ''
+    return content.substring(start, end)
+  }, [content])
+
+  // ─── AI Assist: Call API ────────────────────────────────────────────────
+
+  const callAIAssist = useCallback(async (mode: AIAssistMode) => {
+    if (!currentProject || !activeChapterId) return
+
+    const selText = getSelectedText()
+
+    if (mode === 'rewrite' && !selText) {
+      toast.error('请先选择要改写的文本')
+      return
+    }
+
+    setAiLoading(true)
+    setAiMode(mode)
+    setAiResult(null)
+    setAiSuggestions(null)
+    setAiPopoverOpen(false)
+
+    try {
+      const res = await fetch('/api/ai/writing-assist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: currentProject.id,
+          chapterId: activeChapterId,
+          mode,
+          content,
+          selectedText: selText || undefined,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        toast.error(data.error || 'AI辅助失败')
+        return
+      }
+
+      if (data.suggestions) {
+        setAiSuggestions(data.suggestions)
+      }
+      setAiResult(data.result)
+    } catch (err) {
+      toast.error('AI辅助请求失败')
+      console.error('AI assist error:', err)
+    } finally {
+      setAiLoading(false)
+    }
+  }, [currentProject, activeChapterId, content, getSelectedText])
+
+  // ─── Apply AI result ────────────────────────────────────────────────────
+
+  const handleApplyAI = useCallback(() => {
+    if (!aiResult) return
+
+    if (aiMode === 'rewrite' && selectedText) {
+      // Replace selected text with AI result
+      const textarea = textareaRef.current
+      if (textarea) {
+        const start = textarea.selectionStart
+        const end = textarea.selectionEnd
+        const newContent = content.substring(0, start) + aiResult + content.substring(end)
+        setContent(newContent)
+        const newWordCount = countWords(newContent)
+        if (activeChapterId && activeChapter) {
+          debouncedSave(activeChapterId, title, newContent, newWordCount, activeChapter.status)
+        }
+      }
+    } else if (aiMode === 'suggest') {
+      // For suggestions, just append the result text
+      const newContent = content + '\n' + aiResult
+      setContent(newContent)
+      const newWordCount = countWords(newContent)
+      if (activeChapterId && activeChapter) {
+        debouncedSave(activeChapterId, title, newContent, newWordCount, activeChapter.status)
+      }
+    } else {
+      // Continue / dialogue: append
+      const newContent = content + '\n' + aiResult
+      setContent(newContent)
+      const newWordCount = countWords(newContent)
+      if (activeChapterId && activeChapter) {
+        debouncedSave(activeChapterId, title, newContent, newWordCount, activeChapter.status)
+      }
+    }
+
+    setAiResult(null)
+    setAiSuggestions(null)
+    setAiMode(null)
+    setSelectedText('')
+    toast.success('AI内容已采纳')
+  }, [aiResult, aiMode, selectedText, content, title, activeChapterId, activeChapter, debouncedSave])
+
+  const handleDiscardAI = useCallback(() => {
+    setAiResult(null)
+    setAiSuggestions(null)
+    setAiMode(null)
+    setSelectedText('')
   }, [])
 
   // ─── Content change handler ─────────────────────────────────────────────
@@ -498,16 +725,10 @@ export default function WritingSpace() {
 
   const goToPrevChapter = useCallback(() => {
     if (currentChapterIndex > 0) {
-      // Flush save before switching
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current)
         if (activeChapterId && activeChapter) {
-          saveChapter(activeChapterId, {
-            title,
-            content,
-            wordCount,
-            status: activeChapter.status,
-          })
+          saveChapter(activeChapterId, { title, content, wordCount, status: activeChapter.status })
         }
       }
       setActiveChapterId(sortedChapters[currentChapterIndex - 1].id)
@@ -519,12 +740,7 @@ export default function WritingSpace() {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current)
         if (activeChapterId && activeChapter) {
-          saveChapter(activeChapterId, {
-            title,
-            content,
-            wordCount,
-            status: activeChapter.status,
-          })
+          saveChapter(activeChapterId, { title, content, wordCount, status: activeChapter.status })
         }
       }
       setActiveChapterId(sortedChapters[currentChapterIndex + 1].id)
@@ -536,16 +752,10 @@ export default function WritingSpace() {
   const handleSelectChapter = useCallback(
     (id: string) => {
       if (id === activeChapterId) return
-      // Flush save before switching
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current)
         if (activeChapterId && activeChapter) {
-          saveChapter(activeChapterId, {
-            title,
-            content,
-            wordCount,
-            status: activeChapter.status,
-          })
+          saveChapter(activeChapterId, { title, content, wordCount, status: activeChapter.status })
         }
       }
       setActiveChapterId(id)
@@ -554,22 +764,15 @@ export default function WritingSpace() {
     [activeChapterId, activeChapter, title, content, wordCount, saveChapter, setActiveChapterId]
   )
 
-  // ─── Keyboard shortcut: Ctrl+S to save ──────────────────────────────────
+  // ─── Keyboard shortcuts ──────────────────────────────────────────────────
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault()
-        if (saveTimerRef.current) {
-          clearTimeout(saveTimerRef.current)
-        }
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
         if (activeChapterId && activeChapter) {
-          saveChapter(activeChapterId, {
-            title,
-            content,
-            wordCount,
-            status: activeChapter.status,
-          })
+          saveChapter(activeChapterId, { title, content, wordCount, status: activeChapter.status })
           lastSavedContentRef.current = content
           lastSavedTitleRef.current = title
         }
@@ -579,13 +782,9 @@ export default function WritingSpace() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [activeChapterId, activeChapter, title, content, wordCount, saveChapter])
 
-  // ─── Keyboard: Escape exits focus mode ──────────────────────────────────
-
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && focusMode) {
-        toggleFocusMode()
-      }
+      if (e.key === 'Escape' && focusMode) toggleFocusMode()
     }
     window.addEventListener('keydown', handleEscape)
     return () => window.removeEventListener('keydown', handleEscape)
@@ -658,7 +857,7 @@ export default function WritingSpace() {
     }
   }
 
-  // ─── Left Sidebar Content (reused in drawer for mobile) ─────────────────
+  // ─── Left Sidebar Content ──────────────────────────────────────────────
 
   const leftSidebarContent = (
     <ChapterDirectory
@@ -706,22 +905,11 @@ export default function WritingSpace() {
       {/* Focus mode toggle */}
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={toggleFocusMode}
-          >
-            {focusMode ? (
-              <Minimize2 className="size-4" />
-            ) : (
-              <Maximize2 className="size-4" />
-            )}
+          <Button variant="ghost" size="icon" className="size-8" onClick={toggleFocusMode}>
+            {focusMode ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">
-          {focusMode ? '退出专注模式' : '专注模式'}
-        </TooltipContent>
+        <TooltipContent side="bottom">{focusMode ? '退出专注模式' : '专注模式'}</TooltipContent>
       </Tooltip>
 
       <Separator orientation="vertical" className="h-5 mx-1" />
@@ -729,13 +917,7 @@ export default function WritingSpace() {
       {/* Chapter navigation */}
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={goToPrevChapter}
-            disabled={currentChapterIndex <= 0}
-          >
+          <Button variant="ghost" size="icon" className="size-8" onClick={goToPrevChapter} disabled={currentChapterIndex <= 0}>
             <ChevronLeft className="size-4" />
           </Button>
         </TooltipTrigger>
@@ -748,18 +930,106 @@ export default function WritingSpace() {
 
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            onClick={goToNextChapter}
-            disabled={currentChapterIndex >= sortedChapters.length - 1}
-          >
+          <Button variant="ghost" size="icon" className="size-8" onClick={goToNextChapter} disabled={currentChapterIndex >= sortedChapters.length - 1}>
             <ChevronRight className="size-4" />
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">下一章</TooltipContent>
       </Tooltip>
+
+      <Separator orientation="vertical" className="h-5 mx-1" />
+
+      {/* ─── AI Assist Buttons ─── */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn('h-7 gap-1.5 text-xs', aiLoading ? 'text-emerald-500' : 'text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-400')}
+            onClick={() => callAIAssist('continue')}
+            disabled={aiLoading}
+          >
+            {aiLoading && aiMode === 'continue' ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
+            <span className="hidden sm:inline">续写</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">AI续写 - 根据上下文续写内容</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400"
+            onClick={() => {
+              const sel = getSelectedText()
+              if (!sel) {
+                toast.error('请先选择要改写的文本')
+                return
+              }
+              setSelectedText(sel)
+              callAIAssist('rewrite')
+            }}
+            disabled={aiLoading}
+          >
+            <Copy className="size-3.5" />
+            <span className="hidden sm:inline">改写</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">AI改写 - 选中文字后点击改写</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-purple-600 dark:hover:text-purple-400"
+            onClick={() => callAIAssist('dialogue')}
+            disabled={aiLoading}
+          >
+            <MessageCircle className="size-3.5" />
+            <span className="hidden sm:inline">对话</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">AI生成对话 - 根据角色生成对话</TooltipContent>
+      </Tooltip>
+
+      <Popover open={aiPopoverOpen} onOpenChange={setAiPopoverOpen}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-rose-600 dark:hover:text-rose-400"
+                disabled={aiLoading}
+              >
+                <Lightbulb className="size-3.5" />
+                <span className="hidden sm:inline">建议</span>
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">AI建议 - 获取写作方向建议</TooltipContent>
+        </Tooltip>
+        <PopoverContent className="w-auto p-2" side="bottom" align="start">
+          <div className="space-y-1">
+            <Button variant="ghost" size="sm" className="w-full justify-start text-xs gap-2" onClick={() => callAIAssist('suggest')}>
+              <Lightbulb className="size-3.5 text-purple-500" />
+              获取写作方向建议
+            </Button>
+            <Button variant="ghost" size="sm" className="w-full justify-start text-xs gap-2" onClick={() => callAIAssist('continue')}>
+              <Wand2 className="size-3.5 text-emerald-500" />
+              AI续写下一段
+            </Button>
+            <Button variant="ghost" size="sm" className="w-full justify-start text-xs gap-2" onClick={() => callAIAssist('dialogue')}>
+              <MessageCircle className="size-3.5 text-amber-500" />
+              生成角色对话
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
 
       <Separator orientation="vertical" className="h-5 mx-1" />
 
@@ -778,21 +1048,13 @@ export default function WritingSpace() {
             )}
           >
             {activeChapter?.status === 'completed' ? (
-              <>
-                <Check className="size-3" />
-                已完成
-              </>
+              <><Check className="size-3" />已完成</>
             ) : (
-              <>
-                <PenLine className="size-3" />
-                草稿
-              </>
+              <><PenLine className="size-3" />草稿</>
             )}
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">
-          切换状态：{activeChapter?.status === 'completed' ? '草稿' : '已完成'}
-        </TooltipContent>
+        <TooltipContent side="bottom">切换状态：{activeChapter?.status === 'completed' ? '草稿' : '已完成'}</TooltipContent>
       </Tooltip>
 
       {/* Right side: save indicator + word count */}
@@ -864,6 +1126,16 @@ export default function WritingSpace() {
           </div>
         </ScrollArea>
       </div>
+
+      {/* AI Assist Result Panel */}
+      <AIAssistPanel
+        result={aiResult}
+        suggestions={aiSuggestions}
+        mode={aiMode}
+        isLoading={aiLoading}
+        onApply={handleApplyAI}
+        onDiscard={handleDiscardAI}
+      />
     </div>
   )
 
@@ -872,7 +1144,7 @@ export default function WritingSpace() {
   const FocusModeOverlay = () => {
     if (!focusMode) return null
     return (
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2">
         <Button
           variant="outline"
           size="sm"
@@ -891,6 +1163,17 @@ export default function WritingSpace() {
             Esc
           </kbd>
         </Button>
+        {/* Quick AI assist in focus mode */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="shadow-lg backdrop-blur-md bg-background/80 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 gap-2"
+          onClick={() => callAIAssist('continue')}
+          disabled={aiLoading}
+        >
+          {aiLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
+          AI续写
+        </Button>
       </div>
     )
   }
@@ -904,7 +1187,7 @@ export default function WritingSpace() {
 
       {/* Main content area */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Left sidebar - Chapter Directory (hidden in focus mode & mobile) */}
+        {/* Left sidebar - Chapter Directory */}
         {!focusMode && !isMobile && (
           <div className="w-64 border-r bg-background/50 shrink-0">
             {leftSidebarContent}
@@ -912,16 +1195,11 @@ export default function WritingSpace() {
         )}
 
         {/* Center - Writing Area */}
-        <div
-          className={cn(
-            'flex-1 min-w-0 overflow-hidden',
-            focusMode && 'flex-1'
-          )}
-        >
+        <div className="flex-1 min-w-0 overflow-hidden">
           <WritingArea />
         </div>
 
-        {/* Right sidebar - Chapter Reference (hidden in focus mode & mobile) */}
+        {/* Right sidebar - Chapter Reference */}
         {!focusMode && !isMobile && (
           <div className="w-72 border-l bg-background/50 shrink-0">
             {rightSidebarContent}
@@ -929,7 +1207,7 @@ export default function WritingSpace() {
         )}
       </div>
 
-      {/* Focus mode floating exit button */}
+      {/* Focus mode floating buttons */}
       <FocusModeOverlay />
     </div>
   )

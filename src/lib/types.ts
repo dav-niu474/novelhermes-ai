@@ -78,6 +78,8 @@ export interface HermesMessage {
   timestamp: string
   /** Actions executed by the agent alongside this message */
   actions?: HermesAction[]
+  /** Adoptable content that can be filled into the left panel */
+  adoptOptions?: HermesAdoptOption[]
 }
 
 export type HermesActionType =
@@ -96,6 +98,21 @@ export interface HermesAction {
   label: string        // Human-readable label e.g. "已生成灵感设定"
   status: 'running' | 'success' | 'error'
   detail?: string      // Optional detail
+}
+
+// ─── Adopt Option Types ─────────────────────────────────────────────────────
+
+export type AdoptTargetType = 'project_field' | 'character' | 'world_rule' | 'chapter_content' | 'spark'
+
+export interface HermesAdoptOption {
+  /** Unique ID for this adopt option */
+  id: string
+  /** Human-readable label */
+  label: string
+  /** The type of target to adopt into */
+  type: AdoptTargetType
+  /** The data to adopt */
+  data: Record<string, unknown>
 }
 
 export interface HermesConversation {

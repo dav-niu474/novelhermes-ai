@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
 import type { HermesMessage, HermesAction, AppTab } from '@/lib/types'
+import type { AdoptTarget } from '@/lib/store'
 import { cn } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
@@ -12,6 +13,11 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from '@/components/ui/tooltip'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 
 import {
   MessageSquare,
@@ -33,6 +39,8 @@ import {
   Globe,
   Target,
   ChevronRight,
+  Check,
+  ClipboardCheck,
 } from 'lucide-react'
 
 // ─── Workflow Stage Config ────────────────────────────────────────────────────
@@ -50,7 +58,7 @@ interface QuickActionDef {
   icon: React.ReactNode
   label: string
   prompt: string
-  stage?: string // which workflow stage this action is relevant for
+  stage?: string
 }
 
 const QUICK_ACTIONS: QuickActionDef[] = [
@@ -62,6 +70,129 @@ const QUICK_ACTIONS: QuickActionDef[] = [
   { icon: <GitBranch className="size-3.5" />, label: '推演大纲', prompt: '请基于当前设定推演前5章大纲', stage: 'outline' },
   { icon: <Wand2 className="size-3.5" />, label: '写章草稿', prompt: '请为第一章生成草稿正文', stage: 'writing' },
 ]
+
+// ─── Adopt Button for Assistant Messages ──────────────────────────────────────
+
+function AdoptButton({ message, onAdopt }: { message: HermesMessage; onAdopt: (target: AdoptTarget) => void }) {
+  // Parse the message content for adoptable suggestions
+  const getAdoptOptions = (): { label: string; target: AdoptTarget }[] => {
+    const options: { label: string; target: AdoptTarget }[] = []
+    const content = message.content
+
+    // Try to detect structured content in the message
+    // 1. Look for project field suggestions (书名/简介/金手指/世界观)
+    const fieldPatterns: { pattern: RegExp; field: string; label: string }[] = [
+      { pattern: /(?:书名|标题)[：:]\s*["「『]?(.+?)["」』]?$/m, field: 'title', label: '采纳书名' },
+      { pattern: /(?:简介|一句话简介)[：:]\s*["「『]?(.+?)["」』]?$/m, field: 'synopsis', label: '采纳简介' },
+      { pattern: /(?:金手指|核心能力)[：:]\s*["「『]?(.+?)["」』]?$/m, field: 'goldenFinger', label: '采纳金手指' },
+      { pattern: /(?:世界观|世界观背景)[：:]\s*["「『]?(.+?)["」』]?$/m, field: 'worldBackground', label: '采纳世界观' },
+    ]
+
+    for (const { pattern, field, label } of fieldPatterns) {
+      const match = content.match(pattern)
+      if (match && match[1]) {
+        options.push({
+          label,
+          target: { type: 'project_field', field, value: match[1].trim() },
+        })
+      }
+    }
+
+    // 2. Look for character suggestions
+    if (content.includes('角色') && (content.includes('性格') || content.includes('背景'))) {
+      // Try to parse character info from the message
+      const charNameMatch = content.match(/(?:角色名?|名称)[：:]\s*["「『]?(.+?)["」』]?$/m)
+      const charRoleMatch = content.match(/(?:类型|角色类型)[：:]\s*(主角|反派|配角)/m)
+      const charPersMatch = content.match(/(?:性格|性格特质)[：:]\s*(.+?)$/m)
+      const charBgMatch = content.match(/(?:背景|背景档案)[：:]\s*(.+?)$/m)
+      const charConflictMatch = content.match(/(?:冲突|核心冲突)[：:]\s*(.+?)$/m)
+
+      if (charNameMatch) {
+        options.push({
+          label: `采纳角色「${charNameMatch[1].trim()}」`,
+          target: {
+            type: 'character',
+            character: {
+              name: charNameMatch[1].trim(),
+              role: charRoleMatch?.[1] || '配角',
+              personality: charPersMatch?.[1]?.trim() || '',
+              background: charBgMatch?.[1]?.trim() || '',
+              conflict: charConflictMatch?.[1]?.trim() || '',
+            },
+          },
+        })
+      }
+    }
+
+    // 3. Look for world rule suggestions
+    if (content.includes('世界规则') || content.includes('规则锚点')) {
+      const ruleTitleMatch = content.match(/(?:规则标题?|规则名)[：:]\s*["「『]?(.+?)["」』]?$/m)
+      const ruleCatMatch = content.match(/(?:分类|规则分类)[：:]\s*(基础规则|力量体系|社会结构|地理环境|历史设定)/m)
+      const ruleContentMatch = content.match(/(?:规则内容|内容)[：:]\s*(.+?)$/m)
+
+      if (ruleTitleMatch) {
+        options.push({
+          label: `采纳规则「${ruleTitleMatch[1].trim()}」`,
+          target: {
+            type: 'world_rule',
+            rule: {
+              category: ruleCatMatch?.[1] || '基础规则',
+              title: ruleTitleMatch[1].trim(),
+              content: ruleContentMatch?.[1]?.trim() || '',
+            },
+          },
+        })
+      }
+    }
+
+    // 4. For writing content in writing mode
+    // Detect if we're in writing mode and the message has substantial text
+    const activeTab = useAppStore.getState().activeTab
+    const currentProject = useAppStore.getState().currentProject
+    if (activeTab === 'writing' && currentProject && content.length > 100) {
+      const activeChapterId = useAppStore.getState().activeChapterId
+      if (activeChapterId) {
+        // Only offer to adopt if the content looks like story text
+        const hasDialogue = /["「『"].+?["」』"]/.test(content)
+        const hasNarrative = content.length > 150
+        if (hasDialogue || hasNarrative) {
+          options.push({
+            label: '采纳到当前章节',
+            target: {
+              type: 'chapter_content',
+              chapterId: activeChapterId,
+              content: content.replace(/^[^：:\n]*[：:]\s*/gm, '').trim(), // Remove labels
+              mode: 'append',
+            },
+          })
+        }
+      }
+    }
+
+    return options
+  }
+
+  const adoptOptions = getAdoptOptions()
+
+  if (adoptOptions.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-2">
+      {adoptOptions.map((opt, i) => (
+        <Button
+          key={i}
+          variant="outline"
+          size="sm"
+          className="h-6 text-[10px] gap-1 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+          onClick={() => onAdopt(opt.target)}
+        >
+          <ClipboardCheck className="size-3" />
+          {opt.label}
+        </Button>
+      ))}
+    </div>
+  )
+}
 
 // ─── Action Status Icon ──────────────────────────────────────────────────────
 
@@ -99,7 +230,6 @@ function ActionBadge({ action }: { action: HermesAction }) {
 // ─── Workflow Progress Mini ──────────────────────────────────────────────────
 
 function WorkflowMiniProgress({ project }: { project: { title: string; spark: string; synopsis: string | null; goldenFinger: string | null; worldBackground: string | null; characters: unknown[]; worldRules: unknown[]; chapters: unknown[] } }) {
-  // Determine current stage
   const hasSpark = !!(project.title && project.title !== '未命名项目' && project.spark)
   const hasArchitecture = hasSpark && !!(project.synopsis && project.goldenFinger && project.worldBackground && project.characters.length > 0)
   const hasOutline = hasArchitecture && project.chapters.length > 0
@@ -137,7 +267,7 @@ function WorkflowMiniProgress({ project }: { project: { title: string; spark: st
 
 // ─── Message Bubble ──────────────────────────────────────────────────────────
 
-function MessageBubble({ message }: { message: HermesMessage }) {
+function MessageBubble({ message, onAdopt }: { message: HermesMessage; onAdopt: (target: AdoptTarget) => void }) {
   const isUser = message.role === 'user'
 
   return (
@@ -152,7 +282,6 @@ function MessageBubble({ message }: { message: HermesMessage }) {
         )}
 
         <div className="max-w-[85%] min-w-0">
-          {/* Text bubble */}
           <div
             className={cn(
               'rounded-2xl px-4 py-3 text-sm leading-relaxed',
@@ -185,6 +314,9 @@ function MessageBubble({ message }: { message: HermesMessage }) {
               ))}
             </div>
           )}
+
+          {/* Adopt button for assistant messages */}
+          {!isUser && <AdoptButton message={message} onAdopt={onAdopt} />}
         </div>
 
         {isUser && (
@@ -202,7 +334,6 @@ function MessageBubble({ message }: { message: HermesMessage }) {
 // ─── Welcome Screen ──────────────────────────────────────────────────────────
 
 function WelcomeScreen({ onQuickAction, project }: { onQuickAction: (prompt: string) => void; project: { title: string; spark: string; synopsis: string | null; goldenFinger: string | null; worldBackground: string | null; characters: unknown[]; worldRules: unknown[]; chapters: unknown[] } }) {
-  // Determine which quick actions to show (context-aware)
   const hasSpark = !!(project.title && project.title !== '未命名项目' && project.spark)
   const hasArchitecture = hasSpark && !!(project.synopsis && project.goldenFinger && project.worldBackground && project.characters.length > 0)
   const hasOutline = hasArchitecture && project.chapters.length > 0
@@ -212,13 +343,11 @@ function WelcomeScreen({ onQuickAction, project }: { onQuickAction: (prompt: str
   else if (hasArchitecture) currentStage = 'outline'
   else if (hasSpark) currentStage = 'architecture'
 
-  // Filter actions: show "any" stage + current stage + next stage
   const relevantActions = QUICK_ACTIONS.filter(a =>
     a.stage === 'any' || a.stage === currentStage ||
     a.stage === WORKFLOW_STAGES[WORKFLOW_STAGES.findIndex(s => s.key === currentStage) + 1]?.key
   ).slice(0, 6)
 
-  // Welcome message based on stage
   const stageMessages: Record<string, { title: string; desc: string }> = {
     spark: { title: '开始创作之旅', desc: '输入灵感关键词，我将帮你生成完整的小说设定，开启你的网文创作' },
     architecture: { title: '完善世界观架构', desc: '灵感已就绪！让我帮你补充角色、世界规则，构建坚实的创作基础' },
@@ -242,7 +371,6 @@ function WelcomeScreen({ onQuickAction, project }: { onQuickAction: (prompt: str
         {msg.desc}
       </p>
 
-      {/* Workflow progress */}
       <div className="mb-5">
         <WorkflowMiniProgress project={project} />
       </div>
@@ -283,6 +411,7 @@ export default function HermesAgent() {
     setActiveTab,
     setActiveChapterId,
     refreshProject,
+    setPendingAdopt,
   } = useAppStore()
 
   const [input, setInput] = useState('')
@@ -332,9 +461,7 @@ export default function HermesAgent() {
           if (action.navigateTo) {
             setActiveTab(action.navigateTo as AppTab)
           }
-          // If a chapter draft was written, set the active chapter
           if (action.type === 'write_chapter_draft' && action.status === 'success' && action.detail) {
-            // detail contains "第X章" - extract chapter number
             const match = action.detail.match(/第(\d+)章/)
             if (match) {
               const order = parseInt(match[1])
@@ -354,7 +481,7 @@ export default function HermesAgent() {
     [addHermesMessage, setCurrentProject, setActiveTab, setActiveChapterId, refreshProject]
   )
 
-  // ─── Send message ───────────────────────────────────────────────
+  // ─── Send message ───────────────────────────────────────────────────────
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -421,6 +548,33 @@ export default function HermesAgent() {
     [sendMessage]
   )
 
+  // ─── Adopt from Hermes ────────────────────────────────────────────────────
+
+  const handleAdopt = useCallback((target: AdoptTarget) => {
+    setPendingAdopt(target)
+
+    // Navigate to the appropriate tab if needed
+    if (target.type === 'project_field') {
+      // If we're not on architecture tab, navigate there
+      const activeTab = useAppStore.getState().activeTab
+      if (activeTab !== 'architecture') {
+        setActiveTab('architecture')
+      }
+    } else if (target.type === 'character' || target.type === 'world_rule') {
+      const activeTab = useAppStore.getState().activeTab
+      if (activeTab !== 'architecture') {
+        setActiveTab('architecture')
+      }
+    } else if (target.type === 'chapter_content') {
+      const activeTab = useAppStore.getState().activeTab
+      if (activeTab !== 'writing') {
+        setActiveTab('writing')
+      }
+    } else if (target.type === 'spark') {
+      setActiveTab('spark')
+    }
+  }, [setPendingAdopt, setActiveTab])
+
   // Key press
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -449,7 +603,7 @@ export default function HermesAgent() {
 
   const hasMessages = hermesMessages.length > 0
 
-  // Context-aware quick actions for ongoing conversation
+  // Context-aware quick actions
   const getContextActions = () => {
     const hasSpark = !!(currentProject.title && currentProject.title !== '未命名项目' && currentProject.spark)
     const hasArchitecture = hasSpark && !!(currentProject.synopsis && currentProject.goldenFinger && currentProject.worldBackground && currentProject.characters.length > 0)
@@ -467,7 +621,7 @@ export default function HermesAgent() {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="shrink-0 px-4 py-3 border-b bg-background/95 backdrop-blur-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -476,7 +630,7 @@ export default function HermesAgent() {
             </div>
             <div>
               <h3 className="text-sm font-semibold text-foreground">Hermes</h3>
-              <p className="text-[10px] text-muted-foreground">创作引导 · 脚手链驱动</p>
+              <p className="text-[10px] text-muted-foreground">创作引导 · 采纳建议填充左侧</p>
             </div>
           </div>
 
@@ -512,7 +666,6 @@ export default function HermesAgent() {
           </div>
         </div>
 
-        {/* Project indicator + workflow progress */}
         <div className="mt-2 flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-500/5 border border-emerald-500/10 flex-1 min-w-0">
             <BookOpen className="size-3 text-emerald-500 shrink-0" />
@@ -521,23 +674,21 @@ export default function HermesAgent() {
             </span>
           </div>
         </div>
-        {/* Workflow mini progress */}
         <div className="mt-1.5">
           <WorkflowMiniProgress project={currentProject} />
         </div>
       </div>
 
-      {/* ── Messages Area ── */}
+      {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto py-4 space-y-4">
         {!hasMessages ? (
           <WelcomeScreen onQuickAction={handleQuickAction} project={currentProject} />
         ) : (
           <>
             {hermesMessages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
+              <MessageBubble key={msg.id} message={msg} onAdopt={handleAdopt} />
             ))}
 
-            {/* Loading indicator */}
             {hermesLoading && (
               <div className="flex gap-2.5 px-4">
                 <div className="shrink-0 mt-1">
@@ -562,7 +713,7 @@ export default function HermesAgent() {
         )}
       </div>
 
-      {/* ── Quick Actions (when messages exist) ── */}
+      {/* Quick Actions (when messages exist) */}
       {hasMessages && !hermesLoading && (
         <div className="shrink-0 px-4 py-1.5 border-t border-border/30">
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
@@ -582,7 +733,7 @@ export default function HermesAgent() {
         </div>
       )}
 
-      {/* ── Input Area ── */}
+      {/* Input Area */}
       <div className="shrink-0 px-4 py-3 border-t bg-background/95">
         <div className="flex items-end gap-2">
           <div className="flex-1 relative">

@@ -1,6 +1,15 @@
 import { create } from 'zustand'
 import type { NovelProject, AppTab, HermesMessage } from './types'
 
+// ─── Adopt Suggestion Types ─────────────────────────────────────────────────
+
+export type AdoptTarget =
+  | { type: 'project_field'; field: string; value: string }
+  | { type: 'character'; character: { name: string; role: string; personality: string; background: string; conflict: string } }
+  | { type: 'world_rule'; rule: { category: string; title: string; content: string } }
+  | { type: 'chapter_content'; chapterId: string; content: string; mode: 'append' | 'replace' }
+  | { type: 'spark'; spark: string }
+
 interface AppState {
   // 当前活跃Tab
   activeTab: AppTab
@@ -40,6 +49,12 @@ interface AppState {
   setHermesLoading: (loading: boolean) => void
   /** Refresh current project from backend */
   refreshProject: () => Promise<void>
+
+  // Adopt suggestion mechanism (Hermes → Left Panel)
+  pendingAdopt: AdoptTarget | null
+  setPendingAdopt: (target: AdoptTarget | null) => void
+  /** Consume and clear the pending adopt, returning it */
+  consumeAdopt: () => AdoptTarget | null
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -96,5 +111,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (err) {
       console.error('Failed to refresh project:', err)
     }
+  },
+
+  // Adopt mechanism
+  pendingAdopt: null,
+  setPendingAdopt: (target) => set({ pendingAdopt: target }),
+  consumeAdopt: () => {
+    const { pendingAdopt } = get()
+    set({ pendingAdopt: null })
+    return pendingAdopt
   },
 }))
