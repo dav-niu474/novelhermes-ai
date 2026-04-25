@@ -1,16 +1,7 @@
-import ZAI from 'z-ai-web-dev-sdk'
 import { db } from '@/lib/db'
 import { generateSparkExpansion, generateOutline } from '@/lib/ai'
+import { chat } from '@/lib/nvidia-ai'
 import { NextResponse } from 'next/server'
-
-let zaiInstance: Awaited<ReturnType<typeof ZAI.create>> | null = null
-
-async function getZAI() {
-  if (!zaiInstance) {
-    zaiInstance = await ZAI.create()
-  }
-  return zaiInstance
-}
 
 // ─── Tool Definitions ────────────────────────────────────────────────────────
 
@@ -372,7 +363,6 @@ async function executeTool(
           return { success: false, error: '项目不存在', label: '草稿生成失败' }
         }
 
-        const zai = await getZAI()
         const beatsInfo = chapter.storyBeats
           .map((b) => `  - ${b.type}: ${b.content}`)
           .join('\n')
@@ -383,21 +373,20 @@ async function executeTool(
           .map((r) => `[${r.category}] ${r.title}: ${r.content}`)
           .join('\n')
 
-        const completion = await zai.chat.completions.create({
-          messages: [
-            {
-              role: 'system',
-              content: `你是一位专业的网文写手，擅长根据大纲和节拍写出精彩的章节正文。请根据给定的章节信息，写出该章的正文草稿。
+        const draft = await chat([
+          {
+            role: 'system',
+            content: `你是一位专业的网文写手，擅长根据大纲和节拍写出精彩的章节正文。请根据给定的章节信息，写出该章的正文草稿。
 要求：
 - 正文字数800-1500字
 - 严格遵循节拍（开场→冲突→转折→悬念）的节奏
 - 对话要生动有个性
 - 结尾要留悬念
 - 直接输出正文，不要输出标题或其他元信息`,
-            },
-            {
-              role: 'user',
-              content: `小说：${project.title}
+          },
+          {
+            role: 'user',
+            content: `小说：${project.title}
 简介：${project.synopsis || '暂无'}
 金手指：${project.goldenFinger || '暂无'}
 世界观：${project.worldBackground || '暂无'}
@@ -408,12 +397,8 @@ async function executeTool(
 摘要：${chapter.summary || '暂无'}
 节拍：
 ${beatsInfo || '暂无'}`,
-            },
-          ],
-          thinking: { type: 'disabled' },
-        })
-
-        const draft = completion.choices[0]?.message?.content || ''
+          },
+        ], { temperature: 0.8, max_tokens: 4096 })
         if (!draft.trim()) {
           return { success: false, error: 'AI生成失败', label: '草稿生成失败' }
         }
@@ -755,11 +740,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '项目不存在' }, { status: 404 })
     }
 
-    const zai = await getZAI()
     const systemPrompt = buildSystemPrompt(project)
 
     // Build messages array
-    const messages: { role: string; content: string }[] = [
+    const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
       { role: 'system', content: systemPrompt },
     ]
 
@@ -767,19 +751,14 @@ export async function POST(request: Request) {
     if (history && Array.isArray(history)) {
       const recentHistory = history.slice(-16)
       for (const msg of recentHistory) {
-        messages.push({ role: msg.role, content: msg.content })
+        messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content })
       }
     }
 
     // Add user's new message
     messages.push({ role: 'user', content: message })
 
-    const completion = await zai.chat.completions.create({
-      messages,
-      thinking: { type: 'disabled' },
-    })
-
-    const rawResponse = completion.choices[0]?.message?.content
+    const rawResponse = await chat(messages, { temperature: 0.7, max_tokens: 4096 })
 
     if (!rawResponse) {
       return NextResponse.json({ error: 'AI 响应为空，请重试' }, { status: 500 })
