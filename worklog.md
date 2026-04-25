@@ -116,3 +116,25 @@ Work Log:
 Stage Summary:
 - All API routes now work with new hierarchical schema
 - No more references to direct chapters relation on NovelProject
+
+---
+Task ID: 8
+Agent: Main Agent
+Task: Fix inspiration generation crash on Vercel deployment
+
+Work Log:
+- Diagnosed root cause: system env var DATABASE_URL=file:... (old SQLite) overrides .env.local
+- Fixed db.ts: Override DATABASE_URL with PostgreSQL URL from DIRECT_URL or novelhermes_POSTGRES_PRISMA_URL
+- Fixed .env.local: Updated DATABASE_URL to use pgbouncer pooled connection (port 6543)
+- Changed default AI model from qwen/qwen2.5-72b-instruct (404) to meta/llama-3.3-70b-instruct (works)
+- Fixed package.json dev script: Removed broken env var extraction, added --webpack and --max-old-space-size=4096
+- Pushed Prisma schema to Supabase PostgreSQL database
+- Optimized API routes: Created db-utils.ts with light/full include patterns to reduce memory usage
+- Split spark generation: AI generation (no DB) + separate DB save calls to avoid memory spikes
+- Removed heavy nested include from spark route response
+
+Stage Summary:
+- Database connection now works with both local dev and Vercel
+- Spark generation (AI) works correctly with meta/llama-3.3-70b-instruct model
+- Server stability improved by using webpack mode + 4GB memory limit
+- Spark save flow: AI generation → separate PUT requests for project/characters

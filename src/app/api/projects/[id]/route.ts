@@ -1,43 +1,19 @@
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
+import { getProjectLight, getProjectFull } from '@/lib/db-utils'
 
 // GET /api/projects/[id]
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params
-    const project = await db.novelProject.findUnique({
-      where: { id },
-      include: {
-        characters: true,
-        worldRules: true,
-        volumes: {
-          include: {
-            stages: {
-              include: {
-                units: {
-                  include: {
-                    chapters: {
-                      include: { storyBeats: { orderBy: { order: 'asc' } } },
-                      orderBy: { order: 'asc' },
-                    },
-                  },
-                  orderBy: { order: 'asc' },
-                },
-              },
-              orderBy: { order: 'asc' },
-            },
-          },
-          orderBy: { order: 'asc' },
-        },
-        plotLines: {
-          include: { plotPoints: { orderBy: { order: 'asc' } } },
-          orderBy: { order: 'asc' },
-        },
-      },
-    })
+    // Check if full include is requested via query param
+    const url = new URL(request.url)
+    const full = url.searchParams.get('full') === 'true'
+    
+    const project = full ? await getProjectFull(id) : await getProjectLight(id)
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
@@ -55,7 +31,7 @@ export async function PUT(
   try {
     const { id } = await params
     const body = await request.json()
-    const project = await db.novelProject.update({
+    await db.novelProject.update({
       where: { id },
       data: {
         spark: body.spark,
@@ -65,34 +41,9 @@ export async function PUT(
         worldBackground: body.worldBackground,
         tags: body.tags,
       },
-      include: {
-        characters: true,
-        worldRules: true,
-        volumes: {
-          include: {
-            stages: {
-              include: {
-                units: {
-                  include: {
-                    chapters: {
-                      include: { storyBeats: { orderBy: { order: 'asc' } } },
-                      orderBy: { order: 'asc' },
-                    },
-                  },
-                  orderBy: { order: 'asc' },
-                },
-              },
-              orderBy: { order: 'asc' },
-            },
-          },
-          orderBy: { order: 'asc' },
-        },
-        plotLines: {
-          include: { plotPoints: { orderBy: { order: 'asc' } } },
-          orderBy: { order: 'asc' },
-        },
-      },
     })
+    // Fetch separately with light include to reduce memory
+    const project = await getProjectLight(id)
     return NextResponse.json(project)
   } catch (error) {
     return NextResponse.json({ error: 'Failed to update project' }, { status: 500 })

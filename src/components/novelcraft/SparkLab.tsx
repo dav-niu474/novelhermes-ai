@@ -137,7 +137,7 @@ export default function SparkLab() {
     })
   }, [setCurrentProject, setProjects])
 
-  // Fire the spark - call AI API
+  // Fire the spark - call AI API (generation only, no DB save)
   const handleSpark = useCallback(async () => {
     if (!sparkInput.trim()) return
 
@@ -149,12 +149,12 @@ export default function SparkLab() {
       // Ensure we have a project before generating
       const project = await ensureProject()
 
+      // Step 1: AI generation only (no projectId to avoid memory issues in single request)
       const res = await fetch('/api/ai/spark', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           spark: sparkInput.trim(),
-          projectId: project.id,
         }),
       })
 
@@ -167,11 +167,54 @@ export default function SparkLab() {
 
       if (data.result) {
         setSparkResult(data.result)
-      }
 
-      // If API returned an updated project, update store
-      if (data.project) {
-        updateStoreWithProject(data.project)
+        // Step 2: Save the result to the project separately
+        try {
+          // Update project fields
+          await fetch(`/api/projects/${project.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              spark: sparkInput.trim(),
+              title: data.result.title,
+              synopsis: data.result.synopsis,
+              goldenFinger: data.result.goldenFinger,
+              worldBackground: data.result.worldBackground,
+              tags: data.result.tags,
+            }),
+          })
+
+          // Update characters: delete old, create new
+          for (const char of project.characters) {
+            await fetch(`/api/characters/${char.id}`, { method: 'DELETE' })
+          }
+          if (data.result.characters?.length) {
+            for (const char of data.result.characters) {
+              await fetch(`/api/projects/${project.id}/characters`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  name: char.name,
+                  role: char.role || '主角',
+                  personality: char.personality,
+                  background: char.background,
+                  conflict: char.conflict,
+                }),
+              })
+            }
+          }
+
+          // Refresh project from backend
+          const freshRes = await fetch(`/api/projects/${project.id}`)
+          if (freshRes.ok) {
+            const freshProject: NovelProject = await freshRes.json()
+            updateStoreWithProject(freshProject)
+          }
+        } catch (saveErr) {
+          // Non-critical: result is displayed locally even if save fails
+          console.warn('Failed to save spark result to project:', saveErr)
+          toast.warning('AI生成成功，但保存到项目失败，请手动保存')
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '网络错误，请检查连接后重试')

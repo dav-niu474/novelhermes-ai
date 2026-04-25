@@ -2,12 +2,12 @@
 // Uses NVIDIA's OpenAI-compatible API endpoint for chat completions
 
 const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1'
-const DEFAULT_MODEL = 'qwen/qwen2.5-72b-instruct'
+const DEFAULT_MODEL = 'meta/llama-3.3-70b-instruct'
 
 // Fallback models if the primary one fails
 const FALLBACK_MODELS = [
-  'meta/llama-3.3-70b-instruct',
   'nvidia/llama-3.1-nemotron-70b-instruct',
+  'qwen/qwen2.5-72b-instruct',
 ]
 
 interface ChatMessage {
