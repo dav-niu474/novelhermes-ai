@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { generateSparkExpansion, generateOutline } from '@/lib/ai'
+import { generateSparkExpansion, generateHierarchicalOutline } from '@/lib/ai'
 import { chat } from '@/lib/nvidia-ai'
 import { buildSkillContextForHermes, getSkillReference, getGenreTemplate } from '@/lib/skill-loader'
 import { NextResponse } from 'next/server'
@@ -21,7 +21,7 @@ const TOOLS = [
   },
   {
     name: 'generate_outline',
-    description: '基于当前项目设定，AI推演前5章的因果大纲。无需额外参数，使用项目已有的设定数据。',
+    description: '基于当前项目设定，AI推演层级大纲（卷→阶段→单元→章 + 剧情线）。无需额外参数，使用项目已有的设定数据。',
     params: [],
   },
   {
@@ -85,6 +85,44 @@ const TOOLS = [
     params: [],
   },
 ] as const
+
+// ─── Shared Project Include & Helpers ────────────────────────────────────────
+
+const PROJECT_INCLUDE = {
+  characters: true,
+  worldRules: true,
+  volumes: {
+    include: {
+      stages: {
+        include: {
+          units: {
+            include: {
+              chapters: {
+                include: { storyBeats: { orderBy: { order: 'asc' } } },
+                orderBy: { order: 'asc' },
+              },
+            },
+            orderBy: { order: 'asc' },
+          },
+        },
+        orderBy: { order: 'asc' },
+      },
+    },
+    orderBy: { order: 'asc' },
+  },
+  plotLines: {
+    include: { plotPoints: { orderBy: { order: 'asc' } } },
+    orderBy: { order: 'asc' },
+  },
+}
+
+function flattenChapters(project: { volumes: { stages: { units: { chapters: { order: number; title: string; summary: string | null; content: string | null; wordCount: number; status: string; plotPoints: string | null; storyBeats: { type: string; content: string }[] }[] }[] }[] }[] }): { order: number; title: string; summary: string | null; content: string | null; wordCount: number; status: string; plotPoints: string | null; storyBeats: { type: string; content: string }[] }[] {
+  return project.volumes.flatMap(v =>
+    v.stages.flatMap(s =>
+      s.units.flatMap(u => u.chapters)
+    )
+  )
+}
 
 // ─── Workflow Stage Analysis ──────────────────────────────────────────────────
 
@@ -173,7 +211,7 @@ function analyzeWorkflowStage(project: {
       stageLabel: '大纲推演',
       progress: 60,
       missing: ['章节大纲'],
-      suggestions: ['架构设定已完善，现在可以推演大纲了！', 'AI 将根据设定生成因果递进的前5章大纲'],
+      suggestions: ['架构设定已完善，现在可以推演大纲了！', 'AI 将根据设定生成因果递进的层级大纲'],
       nextAction: 'generate_outline',
       navigateTo: 'outline',
     }
@@ -256,12 +294,12 @@ async function executeTool(
         }
         const updated = await db.novelProject.findUnique({
           where: { id: projectId },
-          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } } },
+          include: PROJECT_INCLUDE,
         })
         return { success: true, data: updated, label: '灵感设定已生成' }
       }
 
-      // ── 大纲推演 ──
+      // ── 大纲推演（层级结构） ──
       case 'generate_outline': {
         const project = await db.novelProject.findUnique({
           where: { id: projectId },
@@ -273,7 +311,7 @@ async function executeTool(
         if (!project.title || project.title === '未命名项目') {
           return { success: false, error: '请先在灵感实验室生成或填写项目设定', label: '大纲推演失败' }
         }
-        const result = await generateOutline({
+        const result = await generateHierarchicalOutline({
           title: project.title,
           synopsis: project.synopsis,
           goldenFinger: project.goldenFinger,
@@ -286,41 +324,211 @@ async function executeTool(
             conflict: c.conflict,
           })),
         })
-        if (!result || !result.chapters) {
+        if (!result || !result.volumes) {
           return { success: false, error: '大纲推演失败，AI 返回格式异常', label: '大纲推演失败' }
         }
-        await db.chapter.deleteMany({ where: { projectId } })
-        for (let idx = 0; idx < (result.chapters as unknown[]).length; idx++) {
-          const ch = (result.chapters as Record<string, unknown>[])[idx]
-          const chapter = await db.chapter.create({
+
+        const volumes = result.volumes as Record<string, unknown>[]
+        const plotLines = result.plotLines as Record<string, unknown>[] | undefined
+
+        if (!Array.isArray(volumes) || volumes.length === 0) {
+          return { success: false, error: '大纲推演失败：未生成有效卷结构', label: '大纲推演失败' }
+        }
+
+        // Clear existing data (cascade deletes handle children)
+        await db.plotLine.deleteMany({ where: { projectId } })
+        await db.volume.deleteMany({ where: { projectId } })
+
+        // Build ID lookup maps for resolving targetOrder → actual IDs
+        const volumeIdMap = new Map<number, string>()
+        const stageIdMap = new Map<string, string>()
+        const unitIdMap = new Map<string, string>()
+        const chapterIdMap = new Map<string, string>()
+
+        // Create the full hierarchy
+        for (let vi = 0; vi < volumes.length; vi++) {
+          const vol = volumes[vi]
+          const volOrder = typeof vol.order === 'number' ? vol.order : vi + 1
+
+          const volume = await db.volume.create({
             data: {
               projectId,
-              order: typeof ch.order === 'number' ? ch.order : idx + 1,
-              title: String(ch.title || `第${idx + 1}章`),
-              summary: String(ch.summary || ''),
-              content: '',
-              status: 'draft',
+              order: volOrder,
+              title: String(vol.title || `第${volOrder}卷`),
+              summary: String(vol.summary || ''),
             },
           })
-          if (ch.beats && Array.isArray(ch.beats)) {
-            for (let i = 0; i < (ch.beats as Record<string, unknown>[]).length; i++) {
-              const beat = (ch.beats as Record<string, unknown>[])[i]
-              await db.storyBeat.create({
+          volumeIdMap.set(volOrder, volume.id)
+
+          const stages = vol.stages as Record<string, unknown>[] | undefined
+          if (!stages || !Array.isArray(stages)) continue
+
+          for (let si = 0; si < stages.length; si++) {
+            const stg = stages[si]
+            const stgOrder = typeof stg.order === 'number' ? stg.order : si + 1
+
+            const stage = await db.stage.create({
+              data: {
+                volumeId: volume.id,
+                order: stgOrder,
+                title: String(stg.title || `阶段${stgOrder}`),
+                summary: String(stg.summary || ''),
+              },
+            })
+            stageIdMap.set(`${volOrder}-${stgOrder}`, stage.id)
+
+            const units = stg.units as Record<string, unknown>[] | undefined
+            if (!units || !Array.isArray(units)) continue
+
+            for (let ui = 0; ui < units.length; ui++) {
+              const unt = units[ui]
+              const untOrder = typeof unt.order === 'number' ? unt.order : ui + 1
+
+              const unit = await db.unit.create({
                 data: {
-                  chapterId: chapter.id,
-                  type: String(beat.type || 'opening'),
-                  content: String(beat.content || ''),
-                  order: i,
+                  stageId: stage.id,
+                  order: untOrder,
+                  title: String(unt.title || `单元${untOrder}`),
+                  summary: String(unt.summary || ''),
+                  chapterPlan: unt.chapterPlan ? String(unt.chapterPlan) : null,
                 },
               })
+              unitIdMap.set(`${volOrder}-${stgOrder}-${untOrder}`, unit.id)
+
+              const chapters = unt.chapters as Record<string, unknown>[] | undefined
+              if (!chapters || !Array.isArray(chapters)) continue
+
+              for (let ci = 0; ci < chapters.length; ci++) {
+                const ch = chapters[ci]
+                const chOrder = typeof ch.order === 'number' ? ch.order : ci + 1
+
+                const plotPointsArr = ch.plotPoints as string[] | undefined
+                const plotPointsJson = plotPointsArr && Array.isArray(plotPointsArr)
+                  ? JSON.stringify(plotPointsArr)
+                  : null
+
+                const chapter = await db.chapter.create({
+                  data: {
+                    unitId: unit.id,
+                    projectId,
+                    order: chOrder,
+                    title: String(ch.title || `第${chOrder}章`),
+                    summary: String(ch.summary || ''),
+                    content: '',
+                    status: 'planned',
+                    plotPoints: plotPointsJson,
+                  },
+                })
+                chapterIdMap.set(`${volOrder}-${stgOrder}-${untOrder}-${chOrder}`, chapter.id)
+
+                const beats = ch.beats as Record<string, unknown>[] | undefined
+                if (beats && Array.isArray(beats) && beats.length > 0) {
+                  for (let bi = 0; bi < beats.length; bi++) {
+                    const beat = beats[bi] as Record<string, unknown>
+                    await db.storyBeat.create({
+                      data: {
+                        chapterId: chapter.id,
+                        type: String(beat.type || 'opening'),
+                        content: String(beat.content || ''),
+                        order: bi,
+                      },
+                    })
+                  }
+                }
+              }
             }
           }
         }
+
+        // Create plot lines and plot points
+        if (plotLines && Array.isArray(plotLines)) {
+          for (let pli = 0; pli < plotLines.length; pli++) {
+            const pl = plotLines[pli]
+            const plotLine = await db.plotLine.create({
+              data: {
+                projectId,
+                type: String(pl.type || 'main'),
+                title: String(pl.title || `剧情线${pli + 1}`),
+                description: pl.description ? String(pl.description) : null,
+                color: pl.color ? String(pl.color) : (pl.type === 'main' ? '#10b981' : '#f59e0b'),
+                order: pli,
+              },
+            })
+
+            const ppArr = pl.plotPoints as Record<string, unknown>[] | undefined
+            if (ppArr && Array.isArray(ppArr)) {
+              for (let ppi = 0; ppi < ppArr.length; ppi++) {
+                const pp = ppArr[ppi]
+                const targetLevel = String(pp.targetLevel || 'unit')
+                const targetOrder = typeof pp.targetOrder === 'number' ? pp.targetOrder : 1
+
+                let targetId = ''
+                switch (targetLevel) {
+                  case 'volume':
+                    targetId = volumeIdMap.get(targetOrder) || ''
+                    break
+                  case 'stage': {
+                    const stageEntry = Array.from(stageIdMap.entries())
+                      .find(([key]) => {
+                        const parts = key.split('-')
+                        return parseInt(parts[1]) === targetOrder
+                      })
+                    targetId = stageEntry?.[1] || ''
+                    break
+                  }
+                  case 'unit': {
+                    const unitEntry = Array.from(unitIdMap.entries())
+                      .find(([key]) => {
+                        const parts = key.split('-')
+                        return parseInt(parts[2]) === targetOrder
+                      })
+                    targetId = unitEntry?.[1] || ''
+                    break
+                  }
+                  case 'chapter': {
+                    const chapterEntry = Array.from(chapterIdMap.entries())
+                      .find(([key]) => {
+                        const parts = key.split('-')
+                        return parseInt(parts[3]) === targetOrder
+                      })
+                    targetId = chapterEntry?.[1] || ''
+                    break
+                  }
+                }
+
+                if (!targetId) {
+                  if (targetLevel === 'volume' && volumeIdMap.size > 0) {
+                    targetId = Array.from(volumeIdMap.values())[0]
+                  } else if (targetLevel === 'stage' && stageIdMap.size > 0) {
+                    targetId = Array.from(stageIdMap.values())[0]
+                  } else if (targetLevel === 'unit' && unitIdMap.size > 0) {
+                    targetId = Array.from(unitIdMap.values())[0]
+                  } else if (targetLevel === 'chapter' && chapterIdMap.size > 0) {
+                    targetId = Array.from(chapterIdMap.values())[0]
+                  }
+                }
+
+                await db.plotPoint.create({
+                  data: {
+                    plotLineId: plotLine.id,
+                    targetLevel,
+                    targetId: targetId || 'unresolved',
+                    order: ppi,
+                    title: String(pp.title || `剧情点${ppi + 1}`),
+                    description: pp.description ? String(pp.description) : null,
+                    status: 'planned',
+                  },
+                })
+              }
+            }
+          }
+        }
+
         const updated = await db.novelProject.findUnique({
           where: { id: projectId },
-          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } } },
+          include: PROJECT_INCLUDE,
         })
-        return { success: true, data: updated, label: '大纲已推演完成' }
+        return { success: true, data: updated, label: '层级大纲已推演完成' }
       }
 
       // ── 添加角色 ──
@@ -341,7 +549,7 @@ async function executeTool(
         })
         const updated = await db.novelProject.findUnique({
           where: { id: projectId },
-          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } } },
+          include: PROJECT_INCLUDE,
         })
         return { success: true, data: updated, label: `角色「${name}」已添加` }
       }
@@ -363,7 +571,7 @@ async function executeTool(
         })
         const updated = await db.novelProject.findUnique({
           where: { id: projectId },
-          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } } },
+          include: PROJECT_INCLUDE,
         })
         return { success: true, data: updated, label: `规则「${title}」已添加` }
       }
@@ -443,7 +651,7 @@ ${beatsInfo || '暂无'}`,
 
         const updated = await db.novelProject.findUnique({
           where: { id: projectId },
-          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } } },
+          include: PROJECT_INCLUDE,
         })
         return { success: true, data: { project: updated, chapterOrder }, label: `第${chapterOrder}章草稿已生成(${wordCount}字)` }
       }
@@ -463,11 +671,13 @@ ${beatsInfo || '暂无'}`,
       case 'analyze_project_state': {
         const project = await db.novelProject.findUnique({
           where: { id: projectId },
-          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: true } } },
+          include: PROJECT_INCLUDE,
         })
         if (!project) {
           return { success: false, error: '项目不存在', label: '分析失败' }
         }
+
+        const chapters = flattenChapters(project)
 
         const missing: string[] = []
         const completed: string[] = []
@@ -482,13 +692,13 @@ ${beatsInfo || '暂无'}`,
         else completed.push(`${project.characters.length}个角色`)
         if (project.worldRules.length === 0) missing.push('世界规则')
         else completed.push(`${project.worldRules.length}条世界规则`)
-        if (project.chapters.length === 0) missing.push('章节大纲')
-        else completed.push(`${project.chapters.length}个章节`)
+        if (chapters.length === 0) missing.push('章节大纲')
+        else completed.push(`${chapters.length}个章节`)
 
-        const totalWords = project.chapters.reduce((sum, c) => sum + c.wordCount, 0)
-        const chaptersWithContent = project.chapters.filter((c) => c.content && c.content.trim().length > 0).length
+        const totalWords = chapters.reduce((sum: number, c: { wordCount: number }) => sum + c.wordCount, 0)
+        const chaptersWithContent = chapters.filter((c: { content: string | null }) => c.content && c.content.trim().length > 0).length
 
-        const workflow = analyzeWorkflowStage(project)
+        const workflow = analyzeWorkflowStage({ ...project, chapters })
 
         const state = {
           title: project.title,
@@ -496,14 +706,14 @@ ${beatsInfo || '暂无'}`,
           missing,
           completed,
           totalWords,
-          chaptersTotal: project.chapters.length,
+          chaptersTotal: chapters.length,
           chaptersWithContent,
           workflow,
           progress: {
             spark: project.title !== '未命名项目' ? 100 : 0,
             architecture: [project.synopsis, project.goldenFinger, project.worldBackground, project.characters.length > 0, project.worldRules.length > 0].filter(Boolean).length / 5 * 100,
-            outline: project.chapters.length > 0 ? 100 : 0,
-            writing: project.chapters.length > 0 ? Math.round((chaptersWithContent / project.chapters.length) * 100) : 0,
+            outline: chapters.length > 0 ? 100 : 0,
+            writing: chapters.length > 0 ? Math.round((chaptersWithContent / chapters.length) * 100) : 0,
           },
         }
         return { success: true, data: state, label: '项目状态分析完成' }
@@ -514,12 +724,13 @@ ${beatsInfo || '暂无'}`,
         const targetStage = String(args.target_stage || '')
         const project = await db.novelProject.findUnique({
           where: { id: projectId },
-          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: true } } },
+          include: PROJECT_INCLUDE,
         })
         if (!project) {
           return { success: false, error: '项目不存在', label: '验证失败' }
         }
 
+        const chapters = flattenChapters(project)
         const issues: string[] = []
         let ready = true
 
@@ -535,7 +746,7 @@ ${beatsInfo || '暂无'}`,
             if (project.characters.length === 0) issues.push('建议添加至少1个角色')
             break
           case 'writing':
-            if (project.chapters.length === 0) { issues.push('需要先推演大纲'); ready = false }
+            if (chapters.length === 0) { issues.push('需要先推演大纲'); ready = false }
             break
         }
 
@@ -550,13 +761,14 @@ ${beatsInfo || '暂无'}`,
       case 'suggest_next_step': {
         const project = await db.novelProject.findUnique({
           where: { id: projectId },
-          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: true } } },
+          include: PROJECT_INCLUDE,
         })
         if (!project) {
           return { success: false, error: '项目不存在', label: '建议失败' }
         }
 
-        const workflow = analyzeWorkflowStage(project)
+        const chapters = flattenChapters(project)
+        const workflow = analyzeWorkflowStage({ ...project, chapters })
         return {
           success: true,
           data: workflow,
@@ -771,12 +983,41 @@ ${genreGuideSection}
           return { success: false, error: 'AI 返回的大纲格式异常，请重试', label: '类型大纲生成失败' }
         }
 
-        // Save to database (same as generate_outline)
-        await db.chapter.deleteMany({ where: { projectId } })
+        // Clear existing volumes (cascade deletes handle chapters, etc.)
+        await db.plotLine.deleteMany({ where: { projectId } })
+        await db.volume.deleteMany({ where: { projectId } })
+
+        // Create a default volume/stage/unit to hold the genre outline chapters
+        const defaultVolume = await db.volume.create({
+          data: {
+            projectId,
+            order: 1,
+            title: `${genre}类型大纲`,
+            summary: `基于${genre}类型模板生成的大纲`,
+          },
+        })
+        const defaultStage = await db.stage.create({
+          data: {
+            volumeId: defaultVolume.id,
+            order: 1,
+            title: '开篇阶段',
+            summary: '故事开端',
+          },
+        })
+        const defaultUnit = await db.unit.create({
+          data: {
+            stageId: defaultStage.id,
+            order: 1,
+            title: '开篇单元',
+            summary: '故事开端单元',
+          },
+        })
+
         for (let idx = 0; idx < parsed.chapters.length; idx++) {
           const ch = parsed.chapters[idx] as Record<string, unknown>
           const chapter = await db.chapter.create({
             data: {
+              unitId: defaultUnit.id,
               projectId,
               order: typeof ch.order === 'number' ? ch.order : idx + 1,
               title: String(ch.title || `第${idx + 1}章`),
@@ -802,7 +1043,7 @@ ${genreGuideSection}
 
         const updated = await db.novelProject.findUnique({
           where: { id: projectId },
-          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } } },
+          include: PROJECT_INCLUDE,
         })
 
         return { success: true, data: { project: updated, genre }, label: `${genre}类型大纲已生成` }
@@ -1017,7 +1258,7 @@ async function buildSystemPrompt(project: {
 
 1. **灵感实验室** → 输入灵感关键词，AI 生成完整设定
 2. **架构看板** → 完善世界观、角色、世界规则
-3. **大纲推演** → AI 推演因果递进的前5章大纲
+3. **大纲推演** → AI 推演因果递进的层级大纲
 4. **创作空间** → 逐章创作，AI 辅助生成草稿
 
 当前项目状态：${stageDescriptions[workflow.stage]}
@@ -1123,24 +1364,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'projectId is required' }, { status: 400 })
     }
 
-    // Fetch project with full context
+    // Fetch project with full context using the new hierarchical structure
     const project = await db.novelProject.findUnique({
       where: { id: projectId },
-      include: {
-        characters: true,
-        worldRules: true,
-        chapters: {
-          include: { storyBeats: { orderBy: { order: 'asc' } } },
-          orderBy: { order: 'asc' },
-        },
-      },
+      include: PROJECT_INCLUDE,
     })
 
     if (!project) {
       return NextResponse.json({ error: '项目不存在' }, { status: 404 })
     }
 
-    const systemPrompt = buildSystemPrompt(project)
+    // Flatten chapters from hierarchy for system prompt and analysis
+    const chapters = flattenChapters(project)
+    const systemPrompt = buildSystemPrompt({ ...project, chapters })
 
     // Build messages array
     const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
@@ -1190,11 +1426,11 @@ export async function POST(request: Request) {
         if (call.tool === 'suggest_next_step' && (result.data as Record<string, unknown>).navigateTo) {
           actions[actions.length - 1].navigateTo = (result.data as Record<string, unknown>).navigateTo as string
         }
-        // If the data has project with chapters, it's a full project update
+        // If the data has project with volumes (hierarchical), it's a full project update
         const data = result.data as Record<string, unknown>
-        if (data.project && (data.project as Record<string, unknown>).chapters) {
+        if (data.project && (data.project as Record<string, unknown>).volumes) {
           updatedProject = data.project
-        } else if (data.chapters) {
+        } else if ((data as Record<string, unknown>).volumes) {
           updatedProject = result.data
         }
         // For write_chapter_draft, extract chapterOrder for navigation

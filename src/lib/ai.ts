@@ -120,8 +120,8 @@ export async function generateSparkExpansion(spark: string) {
   return result
 }
 
-// 因果律大纲推演：基于设定生成前5章冲突走向
-export async function generateOutline(project: {
+// ─── 层级大纲生成：卷→阶段→单元→章 + 剧情线 ────────────────────────────
+export async function generateHierarchicalOutline(project: {
   title: string
   synopsis: string | null
   goldenFinger: string | null
@@ -138,33 +138,96 @@ export async function generateOutline(project: {
     const response = await chat([
       {
         role: 'system',
-        content: `你是一位经验丰富的网文大纲策划师，擅长"因果律推演"——确保每个情节都有前因后果，绝不出现逻辑断裂。
-
-你需要根据已有的小说设定，推演前5章的冲突走向。严格按照JSON格式输出，不要输出任何其他文字。
+        content: `你是一位顶尖网文架构师，擅长"因果律推演"和"多层叙事结构"设计。你需要根据小说设定，构建完整的层级大纲和剧情线。严格按照JSON格式输出，不要输出任何其他文字。
 
 输出格式（严格JSON）：
 {
-  "chapters": [
+  "volumes": [
     {
+      "title": "卷名（有吸引力，概括本卷核心冲突）",
+      "summary": "本卷摘要（100字以内）",
       "order": 1,
-      "title": "章节标题（要有吸引力）",
-      "summary": "章节摘要（100字以内，概述本章核心事件和冲突）",
-      "beats": [
-        { "type": "opening", "content": "开场描述（30字以内）" },
-        { "type": "conflict", "content": "冲突描述（30字以内）" },
-        { "type": "turn", "content": "转折描述（30字以内）" },
-        { "type": "suspense", "content": "悬念描述（30字以内）" }
+      "stages": [
+        {
+          "title": "阶段名（如：崛起、危机、转折等）",
+          "summary": "阶段摘要（80字以内）",
+          "order": 1,
+          "units": [
+            {
+              "title": "单元名（如：初入宗门、秘境探险等）",
+              "summary": "单元摘要（60字以内）",
+              "order": 1,
+              "chapterPlan": "本单元章节规划说明（50字以内）",
+              "chapters": [
+                {
+                  "title": "章名（要有吸引力）",
+                  "summary": "章节摘要（80字以内）",
+                  "order": 1,
+                  "plotPoints": ["要点1", "要点2"],
+                  "beats": [
+                    { "type": "opening", "content": "开场描述（30字以内）" },
+                    { "type": "conflict", "content": "冲突描述（30字以内）" },
+                    { "type": "turn", "content": "转折描述（30字以内）" },
+                    { "type": "suspense", "content": "悬念描述（30字以内）" }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "plotLines": [
+    {
+      "type": "main",
+      "title": "主线名称",
+      "description": "主线描述（100字以内）",
+      "color": "#10b981",
+      "plotPoints": [
+        {
+          "targetLevel": "volume",
+          "targetOrder": 1,
+          "title": "剧情点标题",
+          "description": "剧情点描述（50字以内）"
+        }
+      ]
+    },
+    {
+      "type": "side",
+      "title": "支线名称",
+      "description": "支线描述（80字以内）",
+      "color": "#f59e0b",
+      "plotPoints": [
+        {
+          "targetLevel": "stage",
+          "targetOrder": 1,
+          "title": "支线剧情点标题",
+          "description": "支线剧情点描述（50字以内）"
+        }
       ]
     }
   ]
 }
 
-要求：
-- 5章之间必须有因果递进关系
-- 第1章要有强烈的开篇钩子
+结构要求：
+- 生成1-3个卷（volume），根据故事规模调整
+- 每卷2-3个阶段（stage）
+- 每阶段2-3个单元（unit）
+- 每单元2-4个章（chapter）
+- 必须有1条主线（type="main"），1-2条支线（type="side"）
+- 主线plotPoints的targetLevel可以是volume/stage/unit/chapter
+- 支线plotPoints的targetLevel建议为stage或unit级别
+- targetOrder指的是该level在同级别中的顺序（从1开始）
+
+内容要求：
+- 卷与卷之间要有大的弧线递进
+- 阶段之间要有因果逻辑
+- 第1章必须有强烈的开篇钩子
 - 金手指的获得/觉醒应在前2章内
 - 每章结尾必须留下悬念
 - 冲突要逐步升级，不可原地踏步
+- 主线贯穿全局，支线服务于人物成长或世界观展开
 - 只输出JSON，不要有任何其他文字`,
       },
       {
@@ -177,12 +240,85 @@ export async function generateOutline(project: {
 人物：
 ${charactersInfo}`,
       },
+    ], { temperature: 0.7, max_tokens: 4096 })
+
+    const parsed = extractJSON(response)
+    if (!parsed || !parsed.volumes) throw new Error('层级大纲生成返回格式异常，重试中...')
+    return parsed
+  }, 2, '层级大纲生成')
+
+  return result
+}
+
+// ─── 单元章节规划生成 ──────────────────────────────────────────────────────
+export async function generateUnitChapterPlan(
+  unit: { title: string; summary: string | null },
+  projectContext: {
+    title: string
+    synopsis: string | null
+    goldenFinger: string | null
+    worldBackground: string | null
+    plotLines: { type: string; title: string; plotPoints: { title: string; description: string | null }[] }[]
+  }
+) {
+  const plotLinesInfo = projectContext.plotLines.length > 0
+    ? projectContext.plotLines
+        .map((pl) => `[${pl.type === 'main' ? '主线' : '支线'}] ${pl.title}: ${pl.plotPoints.map((pp) => pp.title).join('→')}`)
+        .join('\n')
+    : '暂无剧情线'
+
+  const result = await withRetry(async () => {
+    const response = await chat([
+      {
+        role: 'system',
+        content: `你是一位专业的网文章节规划师。你需要根据单元信息和项目上下文，为该单元生成详细的章节规划。严格按照JSON格式输出，不要输出任何其他文字。
+
+输出格式（严格JSON）：
+{
+  "chapters": [
+    {
+      "title": "章名（要有吸引力）",
+      "summary": "章节摘要（80字以内）",
+      "order": 1,
+      "plotPoints": ["要点1", "要点2"],
+      "beats": [
+        { "type": "opening", "content": "开场描述（30字以内）" },
+        { "type": "conflict", "content": "冲突描述（30字以内）" },
+        { "type": "turn", "content": "转折描述（30字以内）" },
+        { "type": "suspense", "content": "悬念描述（30字以内）" }
+      ]
+    }
+  ]
+}
+
+要求：
+- 生成2-4个章节
+- 章节之间要有因果递进关系
+- 每章要有明确的冲突和悬念
+- 结合剧情线来安排情节要点
+- plotPoints要与剧情线的剧情点相呼应
+- 只输出JSON，不要有任何其他文字`,
+      },
+      {
+        role: 'user',
+        content: `小说：${projectContext.title}
+简介：${projectContext.synopsis || '暂无'}
+金手指：${projectContext.goldenFinger || '暂无'}
+世界观：${projectContext.worldBackground || '暂无'}
+剧情线：
+${plotLinesInfo}
+
+当前单元：${unit.title}
+单元摘要：${unit.summary || '暂无'}
+
+请生成该单元的章节规划：`,
+      },
     ], { temperature: 0.7 })
 
     const parsed = extractJSON(response)
-    if (!parsed || !parsed.chapters) throw new Error('大纲推演返回格式异常，重试中...')
+    if (!parsed || !parsed.chapters) throw new Error('单元章节规划生成返回格式异常，重试中...')
     return parsed
-  }, 2, '大纲推演')
+  }, 2, '单元章节规划')
 
   return result
 }

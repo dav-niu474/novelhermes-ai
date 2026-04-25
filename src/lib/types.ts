@@ -12,7 +12,8 @@ export interface NovelProject {
   updatedAt: string
   characters: Character[]
   worldRules: WorldRule[]
-  chapters: Chapter[]
+  volumes: Volume[]
+  plotLines: PlotLine[]
 }
 
 export interface Character {
@@ -33,13 +34,45 @@ export interface WorldRule {
   content: string
 }
 
-export interface Chapter {
+// ─── Hierarchical Outline: 卷 → 阶段 → 单元 → 章 ───
+
+export interface Volume {
   id: string
   projectId: string
   order: number
   title: string
   summary: string | null
+  stages: Stage[]
+}
+
+export interface Stage {
+  id: string
+  volumeId: string
+  order: number
+  title: string
+  summary: string | null
+  units: Unit[]
+}
+
+export interface Unit {
+  id: string
+  stageId: string
+  order: number
+  title: string
+  summary: string | null
+  chapterPlan: string | null // JSON string
+  chapters: Chapter[]
+}
+
+export interface Chapter {
+  id: string
+  unitId: string
+  projectId: string
+  order: number
+  title: string
+  summary: string | null
   content: string | null
+  plotPoints: string | null // JSON string: 章节剧情要点
   wordCount: number
   status: string
   storyBeats: StoryBeat[]
@@ -67,6 +100,30 @@ export const BEAT_TYPE_COLORS: Record<BeatType, string> = {
   conflict: 'bg-red-500',
   turn: 'bg-amber-500',
   suspense: 'bg-purple-500',
+}
+
+// ─── Plot Lines & Plot Points ───
+
+export interface PlotLine {
+  id: string
+  projectId: string
+  type: 'main' | 'side' // 主线/支线
+  title: string
+  description: string | null
+  order: number
+  color: string | null
+  plotPoints: PlotPoint[]
+}
+
+export interface PlotPoint {
+  id: string
+  plotLineId: string
+  targetLevel: 'volume' | 'stage' | 'unit' | 'chapter'
+  targetId: string
+  order: number
+  title: string
+  description: string | null
+  status: 'planned' | 'writing' | 'completed'
 }
 
 // ===== Hermes Agent Types =====
@@ -129,4 +186,22 @@ export const TAB_LABELS: Record<AppTab, string> = {
   architecture: '架构看板',
   outline: '大纲推演',
   writing: '创作空间',
+}
+
+// ===== Plot Line Color Presets =====
+
+export const PLOT_LINE_COLORS = [
+  '#10b981', // emerald
+  '#f59e0b', // amber
+  '#ef4444', // red
+  '#8b5cf6', // violet
+  '#06b6d4', // cyan
+  '#f97316', // orange
+  '#ec4899', // pink
+  '#14b8a6', // teal
+]
+
+export const PLOT_LINE_TYPE_LABELS: Record<string, string> = {
+  main: '主线',
+  side: '支线',
 }

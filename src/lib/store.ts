@@ -10,6 +10,19 @@ export type AdoptTarget =
   | { type: 'chapter_content'; chapterId: string; content: string; mode: 'append' | 'replace' }
   | { type: 'spark'; spark: string }
 
+// ─── Outline Selection Types ────────────────────────────────────────────────
+
+export type OutlineSelectionLevel = 'volume' | 'stage' | 'unit' | 'chapter' | null
+
+export interface OutlineSelection {
+  level: OutlineSelectionLevel
+  id: string | null
+}
+
+// ─── Writing Workflow Step ──────────────────────────────────────────────────
+
+export type WritingStep = 'select_unit' | 'plan_chapters' | 'plot_points' | 'write'
+
 interface AppState {
   // 当前活跃Tab
   activeTab: AppTab
@@ -34,6 +47,18 @@ interface AppState {
   // 当前编辑的章节ID
   activeChapterId: string | null
   setActiveChapterId: (id: string | null) => void
+
+  // 当前选中的单元ID (for writing space)
+  activeUnitId: string | null
+  setActiveUnitId: (id: string | null) => void
+
+  // 写作工作流步骤
+  writingStep: WritingStep
+  setWritingStep: (step: WritingStep) => void
+
+  // 大纲推演选中的节点
+  outlineSelection: OutlineSelection
+  setOutlineSelection: (selection: OutlineSelection) => void
 
   // 更新项目局部数据
   updateProjectData: (data: Partial<NovelProject>) => void
@@ -75,6 +100,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   activeChapterId: null,
   setActiveChapterId: (id) => set({ activeChapterId: id }),
+
+  activeUnitId: null,
+  setActiveUnitId: (id) => set({ activeUnitId: id }),
+
+  writingStep: 'select_unit',
+  setWritingStep: (step) => set({ writingStep: step }),
+
+  outlineSelection: { level: null, id: null },
+  setOutlineSelection: (selection) => set({ outlineSelection: selection }),
 
   updateProjectData: (data) =>
     set((state) => ({

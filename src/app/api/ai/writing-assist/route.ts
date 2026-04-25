@@ -45,6 +45,19 @@ export async function POST(request: Request) {
       .map((b) => `${b.type}: ${b.content}`)
       .join(' → ')
 
+    // Parse chapter plotPoints from JSON
+    let plotPointsInfo = ''
+    if (chapter.plotPoints) {
+      try {
+        const pp = JSON.parse(chapter.plotPoints)
+        if (Array.isArray(pp) && pp.length > 0) {
+          plotPointsInfo = pp.map((p: string, i: number) => `${i + 1}. ${p}`).join('\n')
+        }
+      } catch {
+        // Invalid JSON, ignore
+      }
+    }
+
     const currentContent = content || chapter.content || ''
 
     // 根据模式选择不同的AI prompt
@@ -69,6 +82,7 @@ export async function POST(request: Request) {
 
 第${chapter.order}章「${chapter.title}」
 摘要：${chapter.summary || '暂无'}
+剧情要点：${plotPointsInfo || '暂无'}
 节拍：${beatsInfo || '暂无'}
 
 已有正文：
@@ -111,6 +125,7 @@ ${selectedText}
 - 建议要有戏剧张力
 - 用JSON数组格式输出：[{"title":"方向标题","desc":"简要描述"},...]`
         userPrompt = `小说：${project.title}
+剧情要点：${plotPointsInfo || '暂无'}
 节拍：${beatsInfo || '暂无'}
 角色：${charsInfo || '暂无'}
 
@@ -133,6 +148,7 @@ ${currentContent.slice(-500)}
 角色：${charsInfo || '暂无'}
 
 第${chapter.order}章「${chapter.title}」
+剧情要点：${plotPointsInfo || '暂无'}
 节拍：${beatsInfo || '暂无'}
 
 当前正文（最后800字）：

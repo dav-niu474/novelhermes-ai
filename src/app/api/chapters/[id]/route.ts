@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
 
-// PUT /api/chapters/[id]
+// PUT /api/chapters/[id] - Update chapter
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -15,6 +15,7 @@ export async function PUT(
         title: body.title,
         summary: body.summary,
         content: body.content,
+        plotPoints: body.plotPoints,
         wordCount: body.wordCount,
         status: body.status,
         order: body.order,
@@ -27,7 +28,7 @@ export async function PUT(
   }
 }
 
-// DELETE /api/chapters/[id]
+// DELETE /api/chapters/[id] - Delete chapter
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }

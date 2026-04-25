@@ -23,7 +23,8 @@ model NovelProject {
   updatedAt       DateTime  @updatedAt
   characters      Character[]
   worldRules      WorldRule[]
-  chapters        Chapter[]
+  volumes         Volume[]
+  plotLines       PlotLine[]
 }
 
 model Character {
@@ -46,17 +47,61 @@ model WorldRule {
   project   NovelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
-model Chapter {
-  id        String  @id @default(cuid())
+// ─── Hierarchical Outline Structure: 卷 → 阶段 → 单元 → 章 ───
+
+model Volume {
+  id        String   @id @default(cuid())
   projectId String
-  order     Int     @default(0)
-  title     String  @default("未命名章节")
-  summary   String? // 章节摘要
-  content   String? @default("") // 章节正文
-  wordCount Int     @default(0)
-  status    String  @default("draft") // draft/completed
+  order     Int      @default(0)
+  title     String   @default("未命名卷")
+  summary   String?
+  stages    Stage[]
   project   NovelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model Stage {
+  id        String   @id @default(cuid())
+  volumeId  String
+  order     Int      @default(0)
+  title     String   @default("未命名阶段")
+  summary   String?
+  units     Unit[]
+  volume    Volume   @relation(fields: [volumeId], references: [id], onDelete: Cascade)
+
+  @@index([volumeId])
+}
+
+model Unit {
+  id           String   @id @default(cuid())
+  stageId      String
+  order        Int      @default(0)
+  title        String   @default("未命名单元")
+  summary      String?
+  chapterPlan  String?  // JSON: 单元章节规划
+  chapters     Chapter[]
+  stage        Stage    @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([stageId])
+}
+
+model Chapter {
+  id         String      @id @default(cuid())
+  unitId     String
+  projectId  String      // Keep for easy project-level queries
+  order      Int         @default(0)
+  title      String      @default("未命名章节")
+  summary    String?
+  content    String?     @default("")
+  plotPoints String?     // JSON: 章节剧情要点列表
+  wordCount  Int         @default(0)
+  status     String      @default("draft") // draft/planned/completed
+  unit       Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
   storyBeats StoryBeat[]
+
+  @@index([unitId])
+  @@index([projectId])
 }
 
 model StoryBeat {
@@ -66,4 +111,37 @@ model StoryBeat {
   content   String
   order     Int     @default(0)
   chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@index([chapterId])
+}
+
+// ─── Plot Lines & Plot Points (主线/支线剧情设计 & 剧情库) ───
+
+model PlotLine {
+  id          String      @id @default(cuid())
+  projectId   String
+  type        String      @default("main") // main(主线)/side(支线)
+  title       String
+  description String?
+  order       Int         @default(0)
+  color       String?     @default("#10b981") // Display color
+  plotPoints  PlotPoint[]
+  project     NovelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model PlotPoint {
+  id          String    @id @default(cuid())
+  plotLineId  String
+  targetLevel String    @default("unit") // volume/stage/unit/chapter
+  targetId    String    // ID of the target entity (volume/stage/unit/chapter)
+  order       Int       @default(0)
+  title       String
+  description String?
+  status      String    @default("planned") // planned/writing/completed
+  plotLine    PlotLine  @relation(fields: [plotLineId], references: [id], onDelete: Cascade)
+
+  @@index([plotLineId])
+  @@index([targetLevel, targetId])
 }

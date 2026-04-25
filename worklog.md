@@ -1,65 +1,118 @@
-# NovelCraft Architect Pro - Worklog
+# NovelCraft Architect Pro - Work Log
 
 ---
 Task ID: 1
-Agent: main
-Task: Implement AI-assisted writing, AI character generation, and Hermes adopt feature
+Agent: Main
+Task: Redesign Prisma schema for hierarchical outline
 
 Work Log:
-- Analyzed full codebase: all components, API routes, store, types
-- Identified three user issues: no AI in writing space, character editing bugs, no adopt from Hermes
-- Created /api/ai/writing-assist route (continue, rewrite, suggest, dialogue modes)
-- Created /api/ai/character-suggest route (generates 3 AI character options)
-- Updated Zustand store with pendingAdopt/consumeAdopt mechanism for cross-component communication
-- Updated types.ts with HermesAdoptOption and AdoptTargetType
-- Rewrote WritingSpace.tsx with AI assist toolbar (continue, rewrite, dialogue, suggest buttons)
-- Rewrote ArchitectureBoard.tsx with AI character generation in CharacterDialog
-- Fixed character dialog state sync (useEffect instead of useCallback)
-- Fixed world rule dialog state sync (useEffect instead of useCallback)
-- Added adopt value propagation to InlineEditField components
-- Rewrote HermesAgent.tsx with AdoptButton that detects adoptable content
-- Adopt feature: project fields, characters, world rules, and chapter content
-- Built successfully, pushed to GitHub, deployed to Vercel
+- Added Volume, Stage, Unit, PlotLine, PlotPoint models to prisma/schema.prisma
+- Chapter now belongs to Unit (unitId) instead of directly to NovelProject
+- Chapter also has projectId for easy queries
+- PlotLine has type (main/side) and color
+- PlotPoint has targetLevel and targetId for linking to hierarchy nodes
+- StoryBeat kept as-is under Chapter
+- Pushed schema to Supabase PostgreSQL
 
 Stage Summary:
-- WritingSpace now has full AI writing assistant (续写/改写/对话/建议)
-- CharacterDialog now has AI generation with 3 options to choose from and auto-fill
-- Hermes messages now show "采纳" buttons for adoptable suggestions
-- Adopted content fills into left panel (architecture board or writing space)
-- Production deployed at https://novelhermes-ai.vercel.app
-- GitHub repo: https://github.com/dav-niu474/novelhermes-ai.git
+- New schema: NovelProject → Volume → Stage → Unit → Chapter
+- NovelProject → PlotLine → PlotPoint
+- Database tables created successfully
 
 ---
 Task ID: 2
-Agent: main
-Task: Integrate wangwen-creative skill into Hermes agent with update capability
+Agent: Main
+Task: Update TypeScript types and Zustand store
 
 Work Log:
-- Cloned wangwen-creative repo from https://github.com/dav-niu474/wangwen-creative.git
-- Copied skill files into project skills/wangwen-creative/ directory
-- Created src/lib/skill-loader.ts with skill loading, listing, updating capabilities
-- Created src/lib/wangwen-skill-data.ts with embedded skill content (Vercel-compatible)
-- Created /api/skills route for listing and updating skills
-- Created /api/skills/reference route for on-demand reference loading
-- Created /api/skills/genre-template route for on-demand template loading
-- Updated Hermes agent (hermes/route.ts) with 5 new tools:
-  - search_novel: Search novels on 番茄小说 platform
-  - deconstruct_novel: Six-dimension deconstruction analysis
-  - generate_genre_outline: Genre-specific outline with type templates
-  - design_golden_finger: 3 differentiated golden finger schemes
-  - creative_consultation: 3 differentiated creative directions
-- Injected condensed skill context into Hermes system prompt (core principles + workflow)
-- Added skill update button (🔄) in Hermes panel header
-- Added skill badge indicator (网文创技) in Hermes panel
-- Added skill-related quick actions (拆文分析, 金手指设计, 创作方向)
-- Updated ActionBadge icons for new tool types
-- Embedded skill data as TypeScript constants for Vercel serverless compatibility
-- Skill update from GitHub works in local dev; Vercel requires git push + deploy
-- Pushed to GitHub, Vercel deployment queued
+- Updated /src/lib/types.ts with Volume, Stage, Unit, PlotLine, PlotPoint interfaces
+- Updated Chapter interface to include unitId, plotPoints
+- Added PLOT_LINE_COLORS and PLOT_LINE_TYPE_LABELS constants
+- Updated /src/lib/store.ts with new fields: activeUnitId, writingStep, outlineSelection
+- Added WritingStep type: 'select_unit' | 'plan_chapters' | 'plot_points' | 'write'
+- Added OutlineSelection interface
 
 Stage Summary:
-- Hermes now has wangwen-creative skill embedded with full capabilities
-- 5 new tools: search_novel, deconstruct_novel, generate_genre_outline, design_golden_finger, creative_consultation
-- Skill references (8) and genre templates (10) available on-demand
-- Skill update button in Hermes panel pulls latest from GitHub (local dev)
-- Vercel deployment in progress (may take time due to large skill data file ~117KB)
+- Types fully updated for hierarchical structure
+- Store supports unit-based writing workflow
+
+---
+Task ID: 3
+Agent: Sub-agent (full-stack-developer)
+Task: Create all new API routes for hierarchical outline
+
+Work Log:
+- Updated /api/projects/route.ts with full nested include
+- Updated /api/projects/[id]/route.ts with nested volumes/plotLines
+- Updated /api/chapters/[id]/route.ts to include plotPoints
+- Created 12 new route files for volumes, stages, units, plot-lines, plot-points
+
+Stage Summary:
+- All CRUD APIs created for hierarchical outline
+- Auto-order assignment, cascade deletes, projectId resolution all working
+
+---
+Task ID: 4
+Agent: Sub-agent (full-stack-developer)
+Task: Update AI outline generation for hierarchical structure
+
+Work Log:
+- Replaced generateOutline with generateHierarchicalOutline in /src/lib/ai.ts
+- Added generateUnitChapterPlan function
+- Updated /api/ai/outline/route.ts to create full hierarchy
+- Created /api/ai/unit-plan/route.ts for per-unit chapter generation
+- Updated /api/ai/writing-assist/route.ts to include plotPoints
+
+Stage Summary:
+- AI now generates 卷→阶段→单元→章 hierarchy with plot lines
+- Unit-level AI planning available
+
+---
+Task ID: 5
+Agent: Sub-agent (full-stack-developer)
+Task: Rebuild OutlineEngine UI
+
+Work Log:
+- Complete rebuild of OutlineEngine component (1954 lines)
+- Two-panel layout: left=outline tree, right=plot lines/library
+- Hierarchical collapsible tree with inline editing
+- Plot line management with color coding
+- Plot library with filtering
+- AI generation button, add/delete at each level
+- Mobile responsive with Sheet drawer
+
+Stage Summary:
+- Full hierarchical outline UI working
+- Plot lines and plot library integrated
+
+---
+Task ID: 6
+Agent: Sub-agent (full-stack-developer)
+Task: Rebuild WritingSpace UI
+
+Work Log:
+- Complete rebuild of WritingSpace component (2036 lines)
+- 4-step workflow: select_unit → plan_chapters → plot_points → write
+- UnitSelector, ChapterPlanner, PlotPointEditor, WritingEditor sub-components
+- AI writing assist integrated in write step
+- Auto-save, focus mode, Hermes adopt support
+- Step indicator with visual states
+
+Stage Summary:
+- Unit-based writing workflow implemented
+- AI assist, auto-save, plot points all working
+
+---
+Task ID: 7
+Agent: Sub-agent (full-stack-developer)
+Task: Fix API routes for new schema
+
+Work Log:
+- Fixed /api/ai/hermes/route.ts - replaced all project.chapters with flattenChapters helper
+- Fixed /api/ai/spark/route.ts - updated include to use nested hierarchy
+- Added PROJECT_INCLUDE constant for consistent queries
+- Updated all Prisma queries to use volumes→stages→units→chapters include
+
+Stage Summary:
+- All API routes now work with new hierarchical schema
+- No more references to direct chapters relation on NovelProject

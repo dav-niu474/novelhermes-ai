@@ -52,7 +52,29 @@ export async function POST(request: Request) {
         include: {
           characters: true,
           worldRules: true,
-          chapters: { include: { storyBeats: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } },
+          volumes: {
+            include: {
+              stages: {
+                include: {
+                  units: {
+                    include: {
+                      chapters: {
+                        include: { storyBeats: { orderBy: { order: 'asc' } } },
+                        orderBy: { order: 'asc' },
+                      },
+                    },
+                    orderBy: { order: 'asc' },
+                  },
+                },
+                orderBy: { order: 'asc' },
+              },
+            },
+            orderBy: { order: 'asc' },
+          },
+          plotLines: {
+            include: { plotPoints: { orderBy: { order: 'asc' } } },
+            orderBy: { order: 'asc' },
+          },
         },
       })
       return NextResponse.json({ result, project: finalProject })

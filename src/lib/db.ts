@@ -13,7 +13,8 @@ export const db =
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
     datasources: {
       db: {
-        url: process.env.DATABASE_URL,
+        // Use DIRECT_URL for runtime to ensure schema consistency
+        url: process.env.DIRECT_URL || process.env.DATABASE_URL,
       },
     },
   })
