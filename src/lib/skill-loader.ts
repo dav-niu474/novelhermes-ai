@@ -1,9 +1,15 @@
 // ===== Skill Loader Utility =====
-// Reads skill files from the filesystem and manages skill lifecycle
+// Loads wangwen-creative skill from embedded data (Vercel-compatible) or filesystem (local dev)
 
-import { readFile, readdir, stat, writeFile, mkdir, rm } from 'fs/promises'
+import { readFile, readdir, stat, mkdir, rm } from 'fs/promises'
 import { join } from 'path'
 import { execSync } from 'child_process'
+import {
+  WANGWEN_SKILL_MAIN,
+  WANGWEN_SKILL_REFERENCES,
+  WANGWEN_SKILL_GENRE_TEMPLATES,
+  WANGWEN_SKILL_META,
+} from './wangwen-skill-data'
 
 const SKILLS_DIR = join(process.cwd(), 'skills')
 const WANGWEN_SKILL_DIR = join(SKILLS_DIR, 'wangwen-creative')
@@ -42,15 +48,10 @@ function parseFrontmatter(content: string): { name: string; description: string 
 }
 
 /**
- * Get the last modified date of a file
+ * Check if we're running in a serverless environment (Vercel)
  */
-async function getLastModified(filePath: string): Promise<string> {
-  try {
-    const stats = await stat(filePath)
-    return stats.mtime.toISOString()
-  } catch {
-    return new Date().toISOString()
-  }
+function isServerless(): boolean {
+  return !!process.env.VERCEL || process.env.NODE_ENV === 'production'
 }
 
 /**
@@ -59,90 +60,118 @@ async function getLastModified(filePath: string): Promise<string> {
 export async function listSkills(): Promise<SkillMeta[]> {
   const skills: SkillMeta[] = []
 
-  try {
-    const entries = await readdir(SKILLS_DIR)
-    for (const entry of entries) {
-      const skillPath = join(SKILLS_DIR, entry)
-      const skillMdPath = join(skillPath, 'SKILL.md')
-      try {
-        const stats = await stat(skillPath)
-        if (!stats.isDirectory()) continue
-        const content = await readFile(skillMdPath, 'utf-8')
-        const { name, description } = parseFrontmatter(content)
-        const lastUpdated = await getLastModified(skillMdPath)
-        skills.push({
-          name,
-          description: description.slice(0, 200),
-          version: lastUpdated,
-          lastUpdated,
-          path: skillPath,
-        })
-      } catch {
-        // Not a valid skill directory, skip
+  // Always include the embedded wangwen-creative skill
+  const { name, description } = parseFrontmatter(WANGWEN_SKILL_MAIN)
+  skills.push({
+    name,
+    description: description.slice(0, 200),
+    version: WANGWEN_SKILL_META.lastUpdated,
+    lastUpdated: WANGWEN_SKILL_META.lastUpdated,
+    path: 'embedded',
+  })
+
+  // Also scan filesystem for additional skills (local dev)
+  if (!isServerless()) {
+    try {
+      const entries = await readdir(SKILLS_DIR)
+      for (const entry of entries) {
+        if (entry === 'wangwen-creative') continue // Already added from embedded
+        const skillPath = join(SKILLS_DIR, entry)
+        const skillMdPath = join(skillPath, 'SKILL.md')
+        try {
+          const stats = await stat(skillPath)
+          if (!stats.isDirectory()) continue
+          const content = await readFile(skillMdPath, 'utf-8')
+          const { name, description } = parseFrontmatter(content)
+          const lastUpdated = stats.mtime.toISOString()
+          skills.push({
+            name,
+            description: description.slice(0, 200),
+            version: lastUpdated,
+            lastUpdated,
+            path: skillPath,
+          })
+        } catch {
+          // Not a valid skill directory, skip
+        }
       }
+    } catch {
+      // Skills directory doesn't exist
     }
-  } catch {
-    // Skills directory doesn't exist
   }
 
   return skills
 }
 
 /**
- * Load the wangwen-creative skill content
+ * Load the wangwen-creative skill content.
+ * Uses embedded data first (Vercel-compatible), falls back to filesystem (local dev).
  */
 export async function loadWangwenSkill(): Promise<SkillContent | null> {
-  try {
-    const skillMdPath = join(WANGWEN_SKILL_DIR, 'SKILL.md')
-    const mainDoc = await readFile(skillMdPath, 'utf-8')
-    const { name, description } = parseFrontmatter(mainDoc)
-    const lastUpdated = await getLastModified(skillMdPath)
-
-    // Load reference documents
-    const references: Record<string, string> = {}
-    const refsDir = join(WANGWEN_SKILL_DIR, 'references')
+  // Try filesystem first (for local dev with latest files)
+  if (!isServerless()) {
     try {
-      const refFiles = await readdir(refsDir)
-      for (const file of refFiles) {
-        if (file.endsWith('.md')) {
-          const content = await readFile(join(refsDir, file), 'utf-8')
-          references[file.replace('.md', '')] = content
+      const skillMdPath = join(WANGWEN_SKILL_DIR, 'SKILL.md')
+      await stat(skillMdPath) // Check if file exists
+
+      const mainDoc = await readFile(skillMdPath, 'utf-8')
+      const { name, description } = parseFrontmatter(mainDoc)
+      const lastUpdated = (await stat(skillMdPath)).mtime.toISOString()
+
+      // Load reference documents from filesystem
+      const references: Record<string, string> = {}
+      const refsDir = join(WANGWEN_SKILL_DIR, 'references')
+      try {
+        const refFiles = await readdir(refsDir)
+        for (const file of refFiles) {
+          if (file.endsWith('.md')) {
+            const content = await readFile(join(refsDir, file), 'utf-8')
+            references[file.replace('.md', '')] = content
+          }
         }
+      } catch {
+        // No references directory
+      }
+
+      // Load genre templates from filesystem
+      const genreTemplates: Record<string, string> = {}
+      const templatesDir = join(WANGWEN_SKILL_DIR, 'assets', 'genre-templates')
+      try {
+        const templateFiles = await readdir(templatesDir)
+        for (const file of templateFiles) {
+          if (file.endsWith('.md')) {
+            const content = await readFile(join(templatesDir, file), 'utf-8')
+            genreTemplates[file.replace('.md', '')] = content
+          }
+        }
+      } catch {
+        // No templates directory
+      }
+
+      return {
+        meta: { name, description, version: lastUpdated, lastUpdated, path: WANGWEN_SKILL_DIR },
+        mainDoc,
+        references,
+        genreTemplates,
       }
     } catch {
-      // No references directory
+      // Filesystem not available, fall through to embedded data
     }
+  }
 
-    // Load genre templates
-    const genreTemplates: Record<string, string> = {}
-    const templatesDir = join(WANGWEN_SKILL_DIR, 'assets', 'genre-templates')
-    try {
-      const templateFiles = await readdir(templatesDir)
-      for (const file of templateFiles) {
-        if (file.endsWith('.md')) {
-          const content = await readFile(join(templatesDir, file), 'utf-8')
-          genreTemplates[file.replace('.md', '')] = content
-        }
-      }
-    } catch {
-      // No templates directory
-    }
-
-    return {
-      meta: {
-        name,
-        description,
-        version: lastUpdated,
-        lastUpdated,
-        path: WANGWEN_SKILL_DIR,
-      },
-      mainDoc,
-      references,
-      genreTemplates,
-    }
-  } catch (err) {
-    console.error('Failed to load wangwen-creative skill:', err)
-    return null
+  // Use embedded data (Vercel-compatible)
+  const { name, description } = parseFrontmatter(WANGWEN_SKILL_MAIN)
+  return {
+    meta: {
+      name,
+      description,
+      version: WANGWEN_SKILL_META.lastUpdated,
+      lastUpdated: WANGWEN_SKILL_META.lastUpdated,
+      path: 'embedded',
+    },
+    mainDoc: WANGWEN_SKILL_MAIN,
+    references: WANGWEN_SKILL_REFERENCES,
+    genreTemplates: WANGWEN_SKILL_GENRE_TEMPLATES,
   }
 }
 
@@ -207,14 +236,22 @@ ${templateList}
 }
 
 /**
- * Update the wangwen-creative skill from GitHub
- * Returns the update result with version info
+ * Update the wangwen-creative skill from GitHub.
+ * Only works in non-serverless environments (local dev).
+ * In Vercel, updating requires a new deployment.
  */
 export async function updateWangwenSkill(): Promise<{
   success: boolean
   message: string
   version?: string
 }> {
+  if (isServerless()) {
+    return {
+      success: false,
+      message: 'Vercel 环境下不支持运行时更新技能，请通过 git push 触发新的部署来更新技能',
+    }
+  }
+
   try {
     // Create a temp directory for cloning
     const tempDir = join(process.cwd(), '.tmp-skill-update')
@@ -267,7 +304,7 @@ export async function updateWangwenSkill(): Promise<{
 
     return {
       success: true,
-      message: `网文创作技能已更新到最新版本`,
+      message: `网文创作技能已更新到最新版本（本地文件已更新，Vercel 部署需要 git push 触发）`,
       version,
     }
   } catch (err) {
@@ -283,22 +320,42 @@ export async function updateWangwenSkill(): Promise<{
  * Get a specific reference document by name
  */
 export async function getSkillReference(refName: string): Promise<string | null> {
-  try {
-    const refPath = join(WANGWEN_SKILL_DIR, 'references', `${refName}.md`)
-    return await readFile(refPath, 'utf-8')
-  } catch {
-    return null
+  // Try embedded data first
+  if (WANGWEN_SKILL_REFERENCES[refName]) {
+    return WANGWEN_SKILL_REFERENCES[refName]
   }
+
+  // Fallback to filesystem
+  if (!isServerless()) {
+    try {
+      const refPath = join(WANGWEN_SKILL_DIR, 'references', `${refName}.md`)
+      return await readFile(refPath, 'utf-8')
+    } catch {
+      return null
+    }
+  }
+
+  return null
 }
 
 /**
  * Get a specific genre template by name
  */
 export async function getGenreTemplate(templateName: string): Promise<string | null> {
-  try {
-    const templatePath = join(WANGWEN_SKILL_DIR, 'assets', 'genre-templates', `${templateName}.md`)
-    return await readFile(templatePath, 'utf-8')
-  } catch {
-    return null
+  // Try embedded data first
+  if (WANGWEN_SKILL_GENRE_TEMPLATES[templateName]) {
+    return WANGWEN_SKILL_GENRE_TEMPLATES[templateName]
   }
+
+  // Fallback to filesystem
+  if (!isServerless()) {
+    try {
+      const templatePath = join(WANGWEN_SKILL_DIR, 'assets', 'genre-templates', `${templateName}.md`)
+      return await readFile(templatePath, 'utf-8')
+    } catch {
+      return null
+    }
+  }
+
+  return null
 }
