@@ -9,6 +9,27 @@ async function getZAI() {
   return zaiInstance
 }
 
+// ─── Retry wrapper for AI calls ────────────────────────────────────────────────
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 2,
+  label: string = 'AI'
+): Promise<T> {
+  let lastError: unknown = null
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastError = err
+      console.warn(`${label} attempt ${attempt + 1} failed:`, err)
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
+      }
+    }
+  }
+  throw lastError
+}
+
 // 鲁棒的 JSON 提取：从 AI 响应中提取 JSON
 function extractJSON(text: string): Record<string, unknown> | null {
   if (!text || text.trim().length === 0) return null
@@ -65,11 +86,12 @@ function extractJSON(text: string): Record<string, unknown> | null {
 export async function generateSparkExpansion(spark: string) {
   const zai = await getZAI()
 
-  const completion = await zai.chat.completions.create({
-    messages: [
-      {
-        role: 'assistant',
-        content: `你是一位顶尖的网文策划师和世界观架构师。你的任务是将用户提供的碎片化灵感，扩充为具有商业潜力的小说设定。你必须严格按照JSON格式输出，不要输出任何其他文字。
+  const result = await withRetry(async () => {
+    const completion = await zai.chat.completions.create({
+      messages: [
+        {
+          role: 'system',
+          content: `你是一位顶尖的网文策划师和世界观架构师。你的任务是将用户提供的碎片化灵感，扩充为具有商业潜力的小说设定。你必须严格按照JSON格式输出，不要输出任何其他文字。
 
 输出格式要求（严格JSON）：
 {
@@ -95,17 +117,22 @@ export async function generateSparkExpansion(spark: string) {
 - 金手指要有成长性和限制，不能太过完美
 - 世界观要为后续冲突提供土壤
 - 只输出JSON，不要有任何其他文字`,
-      },
-      {
-        role: 'user',
-        content: `灵感关键词：${spark}`,
-      },
-    ],
-    thinking: { type: 'disabled' },
-  })
+        },
+        {
+          role: 'user',
+          content: `灵感关键词：${spark}`,
+        },
+      ],
+      thinking: { type: 'disabled' },
+    })
 
-  const response = completion.choices[0]?.message?.content || ''
-  return extractJSON(response)
+    const response = completion.choices[0]?.message?.content || ''
+    const parsed = extractJSON(response)
+    if (!parsed) throw new Error('灵感生成返回格式异常，重试中...')
+    return parsed
+  }, 2, '灵感生成')
+
+  return result
 }
 
 // 因果律大纲推演：基于设定生成前5章冲突走向
@@ -124,11 +151,12 @@ export async function generateOutline(project: {
         .join('\n')
     : '暂无角色设定'
 
-  const completion = await zai.chat.completions.create({
-    messages: [
-      {
-        role: 'assistant',
-        content: `你是一位经验丰富的网文大纲策划师，擅长"因果律推演"——确保每个情节都有前因后果，绝不出现逻辑断裂。
+  const result = await withRetry(async () => {
+    const completion = await zai.chat.completions.create({
+      messages: [
+        {
+          role: 'system',
+          content: `你是一位经验丰富的网文大纲策划师，擅长"因果律推演"——确保每个情节都有前因后果，绝不出现逻辑断裂。
 
 你需要根据已有的小说设定，推演前5章的冲突走向。严格按照JSON格式输出，不要输出任何其他文字。
 
@@ -156,23 +184,28 @@ export async function generateOutline(project: {
 - 每章结尾必须留下悬念
 - 冲突要逐步升级，不可原地踏步
 - 只输出JSON，不要有任何其他文字`,
-      },
-      {
-        role: 'user',
-        content: `小说设定：
+        },
+        {
+          role: 'user',
+          content: `小说设定：
 书名：${project.title}
 简介：${project.synopsis || '暂无'}
 金手指：${project.goldenFinger || '暂无'}
 世界观：${project.worldBackground || '暂无'}
 人物：
 ${charactersInfo}`,
-      },
-    ],
-    thinking: { type: 'disabled' },
-  })
+        },
+      ],
+      thinking: { type: 'disabled' },
+    })
 
-  const response = completion.choices[0]?.message?.content || ''
-  return extractJSON(response)
+    const response = completion.choices[0]?.message?.content || ''
+    const parsed = extractJSON(response)
+    if (!parsed || !parsed.chapters) throw new Error('大纲推演返回格式异常，重试中...')
+    return parsed
+  }, 2, '大纲推演')
+
+  return result
 }
 
 // 章节戏剧节拍生成
@@ -186,11 +219,12 @@ export async function generateBeats(chapter: {
 }) {
   const zai = await getZAI()
 
-  const completion = await zai.chat.completions.create({
-    messages: [
-      {
-        role: 'assistant',
-        content: `你是一位戏剧结构专家，擅长为网文章节设计"戏剧节拍"。按照JSON格式输出，不要输出任何其他文字。
+  const result = await withRetry(async () => {
+    const completion = await zai.chat.completions.create({
+      messages: [
+        {
+          role: 'system',
+          content: `你是一位戏剧结构专家，擅长为网文章节设计"戏剧节拍"。按照JSON格式输出，不要输出任何其他文字。
 
 输出格式（严格JSON）：
 {
@@ -203,19 +237,24 @@ export async function generateBeats(chapter: {
 }
 
 要求：每个type只能出现一次，节拍之间要有因果逻辑。只输出JSON。`,
-      },
-      {
-        role: 'user',
-        content: `章节：${chapter.title}
+        },
+        {
+          role: 'user',
+          content: `章节：${chapter.title}
 摘要：${chapter.summary || '暂无'}
 小说：${projectContext.title}
 金手指：${projectContext.goldenFinger || '暂无'}
 世界观：${projectContext.worldBackground || '暂无'}`,
-      },
-    ],
-    thinking: { type: 'disabled' },
-  })
+        },
+      ],
+      thinking: { type: 'disabled' },
+    })
 
-  const response = completion.choices[0]?.message?.content || ''
-  return extractJSON(response)
+    const response = completion.choices[0]?.message?.content || ''
+    const parsed = extractJSON(response)
+    if (!parsed || !parsed.beats) throw new Error('节拍生成返回格式异常，重试中...')
+    return parsed
+  }, 2, '节拍生成')
+
+  return result
 }

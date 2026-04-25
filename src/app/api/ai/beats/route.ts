@@ -28,17 +28,22 @@ export async function POST(request: Request) {
     )
 
     if (!result || !result.beats) {
-      return NextResponse.json({ error: '节拍生成失败，请重试' }, { status: 500 })
+      return NextResponse.json({ error: '节拍生成失败，AI 返回格式异常，请重试' }, { status: 500 })
+    }
+
+    const beats = result.beats as { type: string; content: string }[]
+    if (!Array.isArray(beats) || beats.length === 0) {
+      return NextResponse.json({ error: '节拍生成失败：未生成有效节拍，请重试' }, { status: 500 })
     }
 
     await db.storyBeat.deleteMany({ where: { chapterId } })
 
-    for (let i = 0; i < result.beats.length; i++) {
+    for (let i = 0; i < beats.length; i++) {
       await db.storyBeat.create({
         data: {
           chapterId,
-          type: result.beats[i].type,
-          content: result.beats[i].content,
+          type: beats[i].type || 'opening',
+          content: beats[i].content || '',
           order: i,
         },
       })

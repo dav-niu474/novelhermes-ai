@@ -31,17 +31,36 @@ import {
   PenLine,
   ArrowRight,
   Globe,
+  Target,
+  ChevronRight,
 } from 'lucide-react'
 
-// ─── Quick Action Presets (creation workflow) ────────────────────────────────
+// ─── Workflow Stage Config ────────────────────────────────────────────────────
 
-const QUICK_ACTIONS = [
-  { icon: <Sparkles className="size-3.5" />, label: '一键创作', prompt: '请帮我完成从灵感到大纲的完整创作流程：先用"赛博朋克+修仙"作为灵感关键词生成设定，然后推演大纲' },
-  { icon: <Lightbulb className="size-3.5" />, label: '灵感瓶颈', prompt: '我遇到了创作瓶颈，请根据当前项目设定给我一些灵感突破点和新方向' },
-  { icon: <Shield className="size-3.5" />, label: '一致性检查', prompt: '请检查当前项目的角色设定和世界观是否存在逻辑矛盾或不一致的地方' },
-  { icon: <Zap className="size-3.5" />, label: '项目诊断', prompt: '请分析当前项目的创作进度，告诉我还缺少什么，建议下一步操作' },
-  { icon: <Wand2 className="size-3.5" />, label: '写章草稿', prompt: '请为第一章生成草稿正文' },
-  { icon: <GitBranch className="size-3.5" />, label: '推演大纲', prompt: '请基于当前设定推演前5章大纲' },
+const WORKFLOW_STAGES = [
+  { key: 'spark', label: '灵感', icon: <Sparkles className="size-3" /> },
+  { key: 'architecture', label: '架构', icon: <Shield className="size-3" /> },
+  { key: 'outline', label: '大纲', icon: <GitBranch className="size-3" /> },
+  { key: 'writing', label: '创作', icon: <PenLine className="size-3" /> },
+] as const
+
+// ─── Context-Aware Quick Actions ─────────────────────────────────────────────
+
+interface QuickActionDef {
+  icon: React.ReactNode
+  label: string
+  prompt: string
+  stage?: string // which workflow stage this action is relevant for
+}
+
+const QUICK_ACTIONS: QuickActionDef[] = [
+  { icon: <Target className="size-3.5" />, label: '下一步', prompt: '请分析当前项目状态，告诉我下一步应该做什么', stage: 'any' },
+  { icon: <Sparkles className="size-3.5" />, label: '灵感生成', prompt: '请帮我用灵感关键词生成小说设定', stage: 'spark' },
+  { icon: <Lightbulb className="size-3.5" />, label: '灵感瓶颈', prompt: '我遇到了创作瓶颈，请根据当前项目设定给我一些灵感突破点和新方向', stage: 'architecture' },
+  { icon: <Shield className="size-3.5" />, label: '一致性检查', prompt: '请检查当前项目的角色设定和世界观是否存在逻辑矛盾或不一致的地方', stage: 'architecture' },
+  { icon: <Zap className="size-3.5" />, label: '项目诊断', prompt: '请分析当前项目的创作进度，告诉我还缺少什么，建议下一步操作', stage: 'any' },
+  { icon: <GitBranch className="size-3.5" />, label: '推演大纲', prompt: '请基于当前设定推演前5章大纲', stage: 'outline' },
+  { icon: <Wand2 className="size-3.5" />, label: '写章草稿', prompt: '请为第一章生成草稿正文', stage: 'writing' },
 ]
 
 // ─── Action Status Icon ──────────────────────────────────────────────────────
@@ -55,6 +74,8 @@ function ActionBadge({ action }: { action: HermesAction }) {
     write_chapter_draft: <PenLine className="size-3" />,
     navigate_to: <ArrowRight className="size-3" />,
     analyze_project_state: <Zap className="size-3" />,
+    validate_readiness: <Shield className="size-3" />,
+    suggest_next_step: <Target className="size-3" />,
   }
 
   return (
@@ -71,6 +92,45 @@ function ActionBadge({ action }: { action: HermesAction }) {
       {action.status === 'error' && <AlertCircle className="size-3" />}
       {iconMap[action.type] || <Zap className="size-3" />}
       <span>{action.label}</span>
+    </div>
+  )
+}
+
+// ─── Workflow Progress Mini ──────────────────────────────────────────────────
+
+function WorkflowMiniProgress({ project }: { project: { title: string; spark: string; synopsis: string | null; goldenFinger: string | null; worldBackground: string | null; characters: unknown[]; worldRules: unknown[]; chapters: unknown[] } }) {
+  // Determine current stage
+  const hasSpark = !!(project.title && project.title !== '未命名项目' && project.spark)
+  const hasArchitecture = hasSpark && !!(project.synopsis && project.goldenFinger && project.worldBackground && project.characters.length > 0)
+  const hasOutline = hasArchitecture && project.chapters.length > 0
+
+  let activeStage = 0
+  if (hasOutline) activeStage = 3
+  else if (hasArchitecture) activeStage = 2
+  else if (hasSpark) activeStage = 1
+
+  return (
+    <div className="flex items-center gap-1">
+      {WORKFLOW_STAGES.map((stage, i) => (
+        <React.Fragment key={stage.key}>
+          <div
+            className={cn(
+              'flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors',
+              i <= activeStage
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                : i === activeStage + 1
+                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                  : 'bg-muted/50 text-muted-foreground/50',
+            )}
+          >
+            {stage.icon}
+            <span className="hidden sm:inline">{stage.label}</span>
+          </div>
+          {i < WORKFLOW_STAGES.length - 1 && (
+            <ChevronRight className="size-2.5 text-muted-foreground/30" />
+          )}
+        </React.Fragment>
+      ))}
     </div>
   )
 }
@@ -141,7 +201,33 @@ function MessageBubble({ message }: { message: HermesMessage }) {
 
 // ─── Welcome Screen ──────────────────────────────────────────────────────────
 
-function WelcomeScreen({ onQuickAction }: { onQuickAction: (prompt: string) => void }) {
+function WelcomeScreen({ onQuickAction, project }: { onQuickAction: (prompt: string) => void; project: { title: string; spark: string; synopsis: string | null; goldenFinger: string | null; worldBackground: string | null; characters: unknown[]; worldRules: unknown[]; chapters: unknown[] } }) {
+  // Determine which quick actions to show (context-aware)
+  const hasSpark = !!(project.title && project.title !== '未命名项目' && project.spark)
+  const hasArchitecture = hasSpark && !!(project.synopsis && project.goldenFinger && project.worldBackground && project.characters.length > 0)
+  const hasOutline = hasArchitecture && project.chapters.length > 0
+
+  let currentStage = 'spark'
+  if (hasOutline) currentStage = 'writing'
+  else if (hasArchitecture) currentStage = 'outline'
+  else if (hasSpark) currentStage = 'architecture'
+
+  // Filter actions: show "any" stage + current stage + next stage
+  const relevantActions = QUICK_ACTIONS.filter(a =>
+    a.stage === 'any' || a.stage === currentStage ||
+    a.stage === WORKFLOW_STAGES[WORKFLOW_STAGES.findIndex(s => s.key === currentStage) + 1]?.key
+  ).slice(0, 6)
+
+  // Welcome message based on stage
+  const stageMessages: Record<string, { title: string; desc: string }> = {
+    spark: { title: '开始创作之旅', desc: '输入灵感关键词，我将帮你生成完整的小说设定，开启你的网文创作' },
+    architecture: { title: '完善世界观架构', desc: '灵感已就绪！让我帮你补充角色、世界规则，构建坚实的创作基础' },
+    outline: { title: '推演因果大纲', desc: '架构已完善！现在可以推演前5章的因果大纲，让故事有逻辑地展开' },
+    writing: { title: '进入创作空间', desc: '大纲已就绪！让我帮你生成章节草稿，或检查前后一致性' },
+  }
+
+  const msg = stageMessages[currentStage] || stageMessages.spark
+
   return (
     <div className="flex flex-col items-center justify-center h-full px-5 py-6 text-center">
       <div className="relative mb-5">
@@ -151,13 +237,18 @@ function WelcomeScreen({ onQuickAction }: { onQuickAction: (prompt: string) => v
         <div className="absolute -top-1 -right-1 size-3 rounded-full bg-amber-400 animate-pulse" />
       </div>
 
-      <h3 className="text-lg font-bold text-foreground mb-1">Hermes 创作引导</h3>
-      <p className="text-xs text-muted-foreground max-w-[240px] mb-5 leading-relaxed">
-        不仅能聊天，还能直接帮你生成灵感、推演大纲、创建角色、写章节草稿
+      <h3 className="text-lg font-bold text-foreground mb-1">{msg.title}</h3>
+      <p className="text-xs text-muted-foreground max-w-[240px] mb-3 leading-relaxed">
+        {msg.desc}
       </p>
 
+      {/* Workflow progress */}
+      <div className="mb-5">
+        <WorkflowMiniProgress project={project} />
+      </div>
+
       <div className="grid grid-cols-2 gap-2 w-full max-w-[280px]">
-        {QUICK_ACTIONS.map((action) => (
+        {relevantActions.map((action) => (
           <button
             key={action.label}
             onClick={() => onQuickAction(action.prompt)}
@@ -212,7 +303,7 @@ export default function HermesAgent() {
     }
   }, [hermesOpen])
 
-  // ─── Process Hermes response (handle actions, navigation, project sync) ───
+  // ─── Process Hermes response ───
 
   const processResponse = useCallback(
     (data: { response: string; timestamp: string; actions?: { type: string; label: string; status: string; detail?: string; navigateTo?: string }[]; project?: unknown }) => {
@@ -235,24 +326,35 @@ export default function HermesAgent() {
         setCurrentProject(data.project as Parameters<typeof setCurrentProject>[0])
       }
 
-      // Handle navigation
+      // Handle navigation and chapter selection
       if (data.actions) {
         for (const action of data.actions) {
           if (action.navigateTo) {
             setActiveTab(action.navigateTo as AppTab)
           }
           // If a chapter draft was written, set the active chapter
-          if (action.type === 'write_chapter_draft' && action.status === 'success') {
-            // Refresh project to get the latest data
+          if (action.type === 'write_chapter_draft' && action.status === 'success' && action.detail) {
+            // detail contains "第X章" - extract chapter number
+            const match = action.detail.match(/第(\d+)章/)
+            if (match) {
+              const order = parseInt(match[1])
+              const project = useAppStore.getState().currentProject
+              if (project) {
+                const chapter = project.chapters.find(c => c.order === order)
+                if (chapter) {
+                  setActiveChapterId(chapter.id)
+                }
+              }
+            }
             refreshProject()
           }
         }
       }
     },
-    [addHermesMessage, setCurrentProject, setActiveTab, refreshProject]
+    [addHermesMessage, setCurrentProject, setActiveTab, setActiveChapterId, refreshProject]
   )
 
-  // ─── Send message ───────────────────────────────────────────────────────
+  // ─── Send message ───────────────────────────────────────────────
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -297,7 +399,7 @@ export default function HermesAgent() {
         addHermesMessage({
           id: `msg-${Date.now()}-error`,
           role: 'assistant',
-          content: '抱歉，我暂时无法回应。请稍后再试。',
+          content: `抱歉，遇到了问题：${err instanceof Error ? err.message : '请稍后再试'}`,
           timestamp: new Date().toISOString(),
         })
       } finally {
@@ -347,6 +449,22 @@ export default function HermesAgent() {
 
   const hasMessages = hermesMessages.length > 0
 
+  // Context-aware quick actions for ongoing conversation
+  const getContextActions = () => {
+    const hasSpark = !!(currentProject.title && currentProject.title !== '未命名项目' && currentProject.spark)
+    const hasArchitecture = hasSpark && !!(currentProject.synopsis && currentProject.goldenFinger && currentProject.worldBackground && currentProject.characters.length > 0)
+    const hasOutline = hasArchitecture && currentProject.chapters.length > 0
+
+    let stage = 'spark'
+    if (hasOutline) stage = 'writing'
+    else if (hasArchitecture) stage = 'outline'
+    else if (hasSpark) stage = 'architecture'
+
+    return QUICK_ACTIONS.filter(a =>
+      a.stage === 'any' || a.stage === stage
+    )
+  }
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* ── Header ── */}
@@ -358,7 +476,7 @@ export default function HermesAgent() {
             </div>
             <div>
               <h3 className="text-sm font-semibold text-foreground">Hermes</h3>
-              <p className="text-[10px] text-muted-foreground">创作引导 · 可执行操作</p>
+              <p className="text-[10px] text-muted-foreground">创作引导 · 脚手链驱动</p>
             </div>
           </div>
 
@@ -394,19 +512,25 @@ export default function HermesAgent() {
           </div>
         </div>
 
-        {/* Project indicator */}
-        <div className="mt-2 flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-500/5 border border-emerald-500/10">
-          <BookOpen className="size-3 text-emerald-500" />
-          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium truncate">
-            {currentProject.title}
-          </span>
+        {/* Project indicator + workflow progress */}
+        <div className="mt-2 flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-500/5 border border-emerald-500/10 flex-1 min-w-0">
+            <BookOpen className="size-3 text-emerald-500 shrink-0" />
+            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium truncate">
+              {currentProject.title}
+            </span>
+          </div>
+        </div>
+        {/* Workflow mini progress */}
+        <div className="mt-1.5">
+          <WorkflowMiniProgress project={currentProject} />
         </div>
       </div>
 
       {/* ── Messages Area ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto py-4 space-y-4">
         {!hasMessages ? (
-          <WelcomeScreen onQuickAction={handleQuickAction} />
+          <WelcomeScreen onQuickAction={handleQuickAction} project={currentProject} />
         ) : (
           <>
             {hermesMessages.map((msg) => (
@@ -442,7 +566,7 @@ export default function HermesAgent() {
       {hasMessages && !hermesLoading && (
         <div className="shrink-0 px-4 py-1.5 border-t border-border/30">
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-            {QUICK_ACTIONS.map((action) => (
+            {getContextActions().map((action) => (
               <button
                 key={action.label}
                 onClick={() => handleQuickAction(action.prompt)}

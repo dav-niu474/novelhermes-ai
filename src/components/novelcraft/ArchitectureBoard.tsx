@@ -50,6 +50,8 @@ import {
   Sparkles,
   Tags,
   FileText,
+  GitBranch,
+  ArrowRight,
 } from 'lucide-react'
 
 // ===== Role Badge Colors =====
@@ -684,6 +686,26 @@ export default function ArchitectureBoard() {
   const characters = project.characters ?? []
   const worldRules = project.worldRules ?? []
 
+  // Calculate workflow completion
+  const hasTitle = !!(project.title && project.title !== '未命名项目')
+  const hasSynopsis = !!project.synopsis
+  const hasGoldenFinger = !!project.goldenFinger
+  const hasWorldBackground = !!project.worldBackground
+  const hasCharacters = characters.length > 0
+  const hasWorldRules = worldRules.length > 0
+  const workflowSteps = [
+    { label: '书名', done: hasTitle },
+    { label: '简介', done: hasSynopsis },
+    { label: '金手指', done: hasGoldenFinger },
+    { label: '世界观', done: hasWorldBackground },
+    { label: '角色', done: hasCharacters },
+    { label: '世界规则', done: hasWorldRules },
+  ]
+  const completedSteps = workflowSteps.filter((s) => s.done).length
+  const totalSteps = workflowSteps.length
+  const progressPercent = Math.round((completedSteps / totalSteps) * 100)
+  const isArchitectureReady = completedSteps >= 4
+
   // Group world rules by category
   const rulesByCategory = worldRules.reduce<Record<string, WorldRule[]>>((acc, rule) => {
     const cat = rule.category || '基础规则'
@@ -716,6 +738,63 @@ export default function ArchitectureBoard() {
           </p>
         </div>
       </div>
+
+      {/* ── Workflow Progress Banner ── */}
+      <Card className="mb-6 border-border/50">
+        <CardContent className="py-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-medium">架构完善度</span>
+                <span className="text-sm text-muted-foreground">{completedSteps}/{totalSteps}</span>
+                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">{progressPercent}%</span>
+              </div>
+              {/* Progress bar */}
+              <div className="h-2 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-purple-500 transition-all duration-500"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+              {/* Step indicators */}
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {workflowSteps.map((step) => (
+                  <span
+                    key={step.label}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
+                      step.done
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                        : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {step.done ? '✓' : '○'} {step.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Navigate to Outline Engine */}
+            <Button
+              onClick={() => setActiveTab('outline')}
+              disabled={!isArchitectureReady}
+              className={`gap-2 shrink-0 ${
+                isArchitectureReady
+                  ? 'bg-gradient-to-r from-emerald-600 to-purple-600 hover:from-emerald-700 hover:to-purple-700 text-white shadow-md'
+                  : 'bg-muted text-muted-foreground'
+              }`}
+            >
+              <GitBranch className="size-4" />
+              前往大纲推演
+              <ArrowRight className="size-4" />
+            </Button>
+          </div>
+          {!isArchitectureReady && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+              💡 建议至少完善 4 项设定（书名、简介、金手指、世界观）后再推演大纲
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Two-column layout on desktop, single column on mobile */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">

@@ -32,6 +32,7 @@ import {
 import { useAppStore } from '@/lib/store'
 import type { Chapter, StoryBeat, BeatType } from '@/lib/types'
 import { BEAT_TYPE_LABELS, BEAT_TYPE_COLORS } from '@/lib/types'
+import { toast } from 'sonner'
 
 // ─── Beat color mapping for text / border variants ───
 const BEAT_TEXT_COLORS: Record<BeatType, string> = {
@@ -326,13 +327,18 @@ export default function OutlineEngine() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: currentProject.id }),
       })
-      if (!res.ok) throw new Error('生成大纲失败')
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || '生成大纲失败')
+      }
       const data = await res.json()
       if (data.project) {
         setCurrentProject(data.project)
       }
+      toast.success('大纲推演完成！')
     } catch (err) {
       console.error('Outline generation error:', err)
+      toast.error(err instanceof Error ? err.message : '大纲推演失败，请重试')
     } finally {
       setIsLoading(false)
     }
@@ -352,15 +358,20 @@ export default function OutlineEngine() {
             projectId: currentProject.id,
           }),
         })
-        if (!res.ok) throw new Error('重新生成节拍失败')
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error || '重新生成节拍失败')
+        }
         // Refresh entire project from DB
         const freshRes = await fetch(`/api/projects/${currentProject.id}`)
         if (freshRes.ok) {
           const freshProject = await freshRes.json()
           setCurrentProject(freshProject)
         }
+        toast.success('节拍已重新生成')
       } catch (err) {
         console.error('Beat regeneration error:', err)
+        toast.error(err instanceof Error ? err.message : '重新生成节拍失败，请重试')
       } finally {
         setRegeneratingChapterId(null)
       }

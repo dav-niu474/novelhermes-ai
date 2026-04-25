@@ -88,6 +88,8 @@ export type HermesActionType =
   | 'update_project'
   | 'navigate_to'
   | 'write_chapter_draft'
+  | 'validate_readiness'
+  | 'suggest_next_step'
 
 export interface HermesAction {
   type: HermesActionType

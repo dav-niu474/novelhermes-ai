@@ -127,3 +127,44 @@ Stage Summary:
 - ✅ 支持一键创作流程（灵感到大纲）
 - ✅ API 实测成功：spark+outline 链式执行耗时15-35秒
 - ✅ Lint 通过（0 errors）
+
+---
+Task ID: 4
+Agent: Main
+Task: 修复大纲推演500错误 + 架构看板到大纲推演入口 + 工作流进度 + Hermes深度集成
+
+Work Log:
+- 修复 Outline Engine 500 错误
+  - 将 ai.ts 中所有 AI 调用的 role: 'assistant' 改为 role: 'system'（系统提示应使用 system 角色）
+  - 为所有 AI 生成函数（generateSparkExpansion, generateOutline, generateBeats）添加 withRetry 重试机制（最多重试2次）
+  - 在重试逻辑中验证 JSON 解析结果有效性（如检查 chapters/beats 字段是否存在）
+  - 改进 outline API 路由：添加项目设定最低要求验证、更详细的错误消息、结构化校验
+  - 改进 beats API 路由：添加数组有效性校验、字段默认值填充
+  - OutlineEngine 组件添加 toast 错误通知（sonner），显示具体错误信息而非静默失败
+- 添加架构看板 → 大纲推演导航入口
+  - ArchitectureBoard 顶部新增"架构完善度"进度横幅
+  - 显示6项设定完成状态（书名/简介/金手指/世界观/角色/世界规则）
+  - 添加进度条 + 百分比 + 步骤指示器
+  - 新增"前往大纲推演"按钮（建议至少完善4项后启用）
+  - 未就绪时显示黄色提示
+- 添加工作流进度指示器
+  - ArchitectureBoard 的完善度进度横幅
+  - HermesAgent 中的 WorkflowMiniProgress 组件（灵感→架构→大纲→创作 阶段指示）
+- Hermes Agent 脚手链深度集成
+  - 新增 analyzeWorkflowStage() 函数：自动分析项目当前所处创作阶段
+  - 新增 validate_readiness 工具：验证项目是否准备好进入下一阶段
+  - 新增 suggest_next_step 工具：根据当前状态建议下一步操作
+  - 系统提示词增强：包含创作工作流脚手链描述、当前阶段指示、进度百分比
+  - Hermes 前端新增 WorkflowMiniProgress 显示在头部
+  - WelcomeScreen 变为上下文感知：根据当前创作阶段显示不同欢迎词和建议
+  - 快捷操作变为上下文感知：根据当前阶段过滤显示相关操作
+  - write_chapter_draft 执行后自动导航到创作空间并设置活跃章节
+  - 错误消息显示具体原因（如"请先在灵感实验室生成或填写项目设定"）
+
+Stage Summary:
+- ✅ 大纲推演 500 错误已修复（role: 'system' + retry + 验证）
+- ✅ 架构看板到大纲推演入口已添加（进度横幅 + 导航按钮）
+- ✅ 工作流进度指示器已添加（ArchitectureBoard + Hermes）
+- ✅ Hermes 脚手链深度集成已完成（9种工具、工作流分析、上下文感知）
+- ✅ Lint 通过（0 errors）
+- ✅ 开发服务器正常运行

@@ -13,13 +13,11 @@ async function getZAI() {
 }
 
 // ─── Tool Definitions ────────────────────────────────────────────────────────
-// Each tool: name, description (for AI), parameters schema, and executor
 
 interface ToolResult {
   success: boolean
   data?: unknown
   error?: string
-  /** Human-readable label for the action */
   label: string
 }
 
@@ -27,7 +25,7 @@ const TOOLS = [
   {
     name: 'generate_spark',
     description: '从灵感关键词生成完整的小说设定（书名、简介、金手指、世界观、角色）。需要用户提供的灵感关键词。',
-    params: ['spark' /** 灵感关键词 */],
+    params: ['spark'],
   },
   {
     name: 'generate_outline',
@@ -59,7 +57,140 @@ const TOOLS = [
     description: '分析当前项目的创作进度和状态，返回缺失项和建议下一步。无需额外参数。',
     params: [],
   },
+  {
+    name: 'validate_readiness',
+    description: '验证项目是否准备好进入下一个创作阶段。参数：target_stage(目标阶段)，可选值：spark, architecture, outline, writing。',
+    params: ['target_stage'],
+  },
+  {
+    name: 'suggest_next_step',
+    description: '根据当前项目状态，建议用户下一步应该做什么。返回建议操作和导航目标。无需额外参数。',
+    params: [],
+  },
 ] as const
+
+// ─── Workflow Stage Analysis ──────────────────────────────────────────────────
+
+function analyzeWorkflowStage(project: {
+  title: string
+  spark: string
+  synopsis: string | null
+  goldenFinger: string | null
+  worldBackground: string | null
+  tags: string | null
+  characters: { name: string; role: string }[]
+  worldRules: { category: string; title: string }[]
+  chapters: { order: number; title: string; content: string | null; wordCount: number; status: string; storyBeats: { type: string; content: string }[] }[]
+}): {
+  stage: 'spark' | 'architecture' | 'outline' | 'writing'
+  stageLabel: string
+  progress: number
+  missing: string[]
+  suggestions: string[]
+  nextAction: string
+  navigateTo: string
+} {
+  // Stage 1: Spark - has basic settings?
+  const hasSpark = !!(project.title && project.title !== '未命名项目' && project.spark)
+  const hasBasicSettings = !!(project.synopsis && project.goldenFinger && project.worldBackground)
+
+  // Stage 2: Architecture - has characters and world rules?
+  const hasCharacters = project.characters.length > 0
+  const hasWorldRules = project.worldRules.length > 0
+
+  // Stage 3: Outline - has chapters?
+  const hasOutline = project.chapters.length > 0
+
+  // Stage 4: Writing - has content?
+  const hasWriting = project.chapters.some(c => c.content && c.content.trim().length > 100)
+
+  const missing: string[] = []
+  const suggestions: string[] = []
+
+  if (!hasSpark) {
+    return {
+      stage: 'spark',
+      stageLabel: '灵感实验室',
+      progress: 0,
+      missing: ['灵感关键词', '项目标题'],
+      suggestions: ['在灵感实验室输入灵感关键词，让 AI 生成小说设定', '或者直接描述你想写的小说类型和核心概念'],
+      nextAction: 'generate_spark',
+      navigateTo: 'spark',
+    }
+  }
+
+  if (!hasBasicSettings) {
+    if (!project.synopsis) missing.push('一句话简介')
+    if (!project.goldenFinger) missing.push('金手指设定')
+    if (!project.worldBackground) missing.push('世界观背景')
+    suggestions.push('在架构看板中完善缺失的设定项')
+    return {
+      stage: 'architecture',
+      stageLabel: '架构看板',
+      progress: 25,
+      missing,
+      suggestions,
+      nextAction: 'navigate_to',
+      navigateTo: 'architecture',
+    }
+  }
+
+  if (!hasCharacters || !hasWorldRules) {
+    if (!hasCharacters) missing.push('角色设定')
+    if (!hasWorldRules) missing.push('世界规则锚点')
+    suggestions.push(hasCharacters ? '添加世界规则锚点，确保世界观一致性' : '创建核心角色，建立冲突关系')
+    return {
+      stage: 'architecture',
+      stageLabel: '架构看板',
+      progress: 50,
+      missing,
+      suggestions,
+      nextAction: hasCharacters ? 'add_world_rule' : 'add_character',
+      navigateTo: 'architecture',
+    }
+  }
+
+  if (!hasOutline) {
+    return {
+      stage: 'outline',
+      stageLabel: '大纲推演',
+      progress: 60,
+      missing: ['章节大纲'],
+      suggestions: ['架构设定已完善，现在可以推演大纲了！', 'AI 将根据设定生成因果递进的前5章大纲'],
+      nextAction: 'generate_outline',
+      navigateTo: 'outline',
+    }
+  }
+
+  if (!hasWriting) {
+    return {
+      stage: 'writing',
+      stageLabel: '创作空间',
+      progress: 75,
+      missing: ['章节正文'],
+      suggestions: ['大纲已就绪，选择一个章节开始创作！', '也可以让 AI 为第一章生成草稿'],
+      nextAction: 'write_chapter_draft',
+      navigateTo: 'writing',
+    }
+  }
+
+  // Advanced writing stage
+  const completedChapters = project.chapters.filter(c => c.status === 'completed').length
+  const totalChapters = project.chapters.length
+  return {
+    stage: 'writing',
+    stageLabel: '创作空间',
+    progress: Math.min(95, 75 + Math.round((completedChapters / totalChapters) * 20)),
+    missing: [],
+    suggestions: [
+      `已完成 ${completedChapters}/${totalChapters} 章`,
+      '继续创作或让 AI 辅助生成下一章草稿',
+      '可以检查前后章节的一致性',
+    ],
+    nextAction: 'write_chapter_draft',
+    navigateTo: 'writing',
+  }
+}
 
 // ─── Tool Executors ──────────────────────────────────────────────────────────
 
@@ -80,7 +211,6 @@ async function executeTool(
         if (!result) {
           return { success: false, error: 'AI生成失败', label: '灵感生成失败' }
         }
-        // Save spark to project
         await db.novelProject.update({
           where: { id: projectId },
           data: {
@@ -92,7 +222,6 @@ async function executeTool(
             tags: (result.tags as string) || null,
           },
         })
-        // Save characters
         if (result.characters && Array.isArray(result.characters)) {
           await db.character.deleteMany({ where: { projectId } })
           for (const char of result.characters as { name: string; role: string; personality?: string; background?: string; conflict?: string }[]) {
@@ -124,6 +253,9 @@ async function executeTool(
         if (!project) {
           return { success: false, error: '项目不存在', label: '大纲推演失败' }
         }
+        if (!project.title || project.title === '未命名项目') {
+          return { success: false, error: '请先在灵感实验室生成或填写项目设定', label: '大纲推演失败' }
+        }
         const result = await generateOutline({
           title: project.title,
           synopsis: project.synopsis,
@@ -138,9 +270,8 @@ async function executeTool(
           })),
         })
         if (!result || !result.chapters) {
-          return { success: false, error: '大纲推演失败', label: '大纲推演失败' }
+          return { success: false, error: '大纲推演失败，AI 返回格式异常', label: '大纲推演失败' }
         }
-        // Save chapters + beats
         await db.chapter.deleteMany({ where: { projectId } })
         for (let idx = 0; idx < (result.chapters as unknown[]).length; idx++) {
           const ch = (result.chapters as Record<string, unknown>[])[idx]
@@ -231,7 +362,7 @@ async function executeTool(
           include: { storyBeats: { orderBy: { order: 'asc' } } },
         })
         if (!chapter) {
-          return { success: false, error: `第${chapterOrder}章不存在`, label: '草稿生成失败' }
+          return { success: false, error: `第${chapterOrder}章不存在，请先推演大纲`, label: '草稿生成失败' }
         }
         const project = await db.novelProject.findUnique({
           where: { id: projectId },
@@ -241,7 +372,6 @@ async function executeTool(
           return { success: false, error: '项目不存在', label: '草稿生成失败' }
         }
 
-        // Use LLM to generate chapter content
         const zai = await getZAI()
         const beatsInfo = chapter.storyBeats
           .map((b) => `  - ${b.type}: ${b.content}`)
@@ -249,11 +379,14 @@ async function executeTool(
         const charsInfo = project.characters
           .map((c) => `${c.name}(${c.role})`)
           .join('、')
+        const rulesInfo = project.worldRules
+          .map((r) => `[${r.category}] ${r.title}: ${r.content}`)
+          .join('\n')
 
         const completion = await zai.chat.completions.create({
           messages: [
             {
-              role: 'assistant',
+              role: 'system',
               content: `你是一位专业的网文写手，擅长根据大纲和节拍写出精彩的章节正文。请根据给定的章节信息，写出该章的正文草稿。
 要求：
 - 正文字数800-1500字
@@ -269,6 +402,7 @@ async function executeTool(
 金手指：${project.goldenFinger || '暂无'}
 世界观：${project.worldBackground || '暂无'}
 角色：${charsInfo || '暂无'}
+世界规则：${rulesInfo || '暂无'}
 
 第${chapter.order}章「${chapter.title}」
 摘要：${chapter.summary || '暂无'}
@@ -284,7 +418,6 @@ ${beatsInfo || '暂无'}`,
           return { success: false, error: 'AI生成失败', label: '草稿生成失败' }
         }
 
-        // Count words
         const chineseChars = (draft.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length
         const englishWords = draft
           .replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, ' ')
@@ -301,7 +434,7 @@ ${beatsInfo || '暂无'}`,
           where: { id: projectId },
           include: { characters: true, worldRules: true, chapters: { include: { storyBeats: { orderBy: { order: 'asc' } } }, orderBy: { order: 'asc' } } },
         })
-        return { success: true, data: updated, label: `第${chapterOrder}章草稿已生成(${wordCount}字)` }
+        return { success: true, data: { project: updated, chapterOrder }, label: `第${chapterOrder}章草稿已生成(${wordCount}字)` }
       }
 
       // ── 导航 ──
@@ -311,7 +444,8 @@ ${beatsInfo || '暂无'}`,
         if (!validTabs.includes(tab)) {
           return { success: false, error: `无效的导航目标: ${tab}`, label: '导航失败' }
         }
-        return { success: true, data: { navigateTo: tab }, label: `已导航到${tab === 'spark' ? '灵感实验室' : tab === 'architecture' ? '架构看板' : tab === 'outline' ? '大纲推演' : '创作空间'}` }
+        const tabLabels: Record<string, string> = { spark: '灵感实验室', architecture: '架构看板', outline: '大纲推演', writing: '创作空间' }
+        return { success: true, data: { navigateTo: tab }, label: `已导航到${tabLabels[tab]}` }
       }
 
       // ── 项目状态分析 ──
@@ -323,6 +457,7 @@ ${beatsInfo || '暂无'}`,
         if (!project) {
           return { success: false, error: '项目不存在', label: '分析失败' }
         }
+
         const missing: string[] = []
         const completed: string[] = []
 
@@ -342,6 +477,8 @@ ${beatsInfo || '暂无'}`,
         const totalWords = project.chapters.reduce((sum, c) => sum + c.wordCount, 0)
         const chaptersWithContent = project.chapters.filter((c) => c.content && c.content.trim().length > 0).length
 
+        const workflow = analyzeWorkflowStage(project)
+
         const state = {
           title: project.title,
           hasSpark: project.title !== '未命名项目',
@@ -350,14 +487,70 @@ ${beatsInfo || '暂无'}`,
           totalWords,
           chaptersTotal: project.chapters.length,
           chaptersWithContent,
+          workflow,
           progress: {
             spark: project.title !== '未命名项目' ? 100 : 0,
-            architecture: project.characters.length > 0 ? 80 : 0,
+            architecture: [project.synopsis, project.goldenFinger, project.worldBackground, project.characters.length > 0, project.worldRules.length > 0].filter(Boolean).length / 5 * 100,
             outline: project.chapters.length > 0 ? 100 : 0,
             writing: project.chapters.length > 0 ? Math.round((chaptersWithContent / project.chapters.length) * 100) : 0,
           },
         }
         return { success: true, data: state, label: '项目状态分析完成' }
+      }
+
+      // ── 阶段就绪验证 ──
+      case 'validate_readiness': {
+        const targetStage = String(args.target_stage || '')
+        const project = await db.novelProject.findUnique({
+          where: { id: projectId },
+          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: true } } },
+        })
+        if (!project) {
+          return { success: false, error: '项目不存在', label: '验证失败' }
+        }
+
+        const issues: string[] = []
+        let ready = true
+
+        switch (targetStage) {
+          case 'architecture':
+            if (!project.title || project.title === '未命名项目') { issues.push('缺少书名'); ready = false }
+            if (!project.synopsis) { issues.push('缺少简介'); ready = false }
+            break
+          case 'outline':
+            if (!project.title || project.title === '未命名项目') { issues.push('缺少书名'); ready = false }
+            if (!project.goldenFinger) issues.push('建议补充金手指设定')
+            if (!project.worldBackground) issues.push('建议补充世界观背景')
+            if (project.characters.length === 0) issues.push('建议添加至少1个角色')
+            break
+          case 'writing':
+            if (project.chapters.length === 0) { issues.push('需要先推演大纲'); ready = false }
+            break
+        }
+
+        return {
+          success: true,
+          data: { ready, issues, targetStage },
+          label: ready ? `${targetStage}阶段就绪` : `${targetStage}阶段尚未就绪`,
+        }
+      }
+
+      // ── 建议下一步 ──
+      case 'suggest_next_step': {
+        const project = await db.novelProject.findUnique({
+          where: { id: projectId },
+          include: { characters: true, worldRules: true, chapters: { include: { storyBeats: true } } },
+        })
+        if (!project) {
+          return { success: false, error: '项目不存在', label: '建议失败' }
+        }
+
+        const workflow = analyzeWorkflowStage(project)
+        return {
+          success: true,
+          data: workflow,
+          label: `建议：前往${workflow.stageLabel}`,
+        }
       }
 
       default:
@@ -410,7 +603,15 @@ function buildSystemPrompt(project: {
     `### ${t.name}\n${t.description}\n参数: ${t.params.length > 0 ? t.params.join(', ') : '无'}`
   ).join('\n\n')
 
-  // Analyze current state
+  // Analyze current workflow state
+  const workflow = analyzeWorkflowStage(project)
+  const stageDescriptions: Record<string, string> = {
+    spark: '🟡 灵感阶段 — 还未生成基础设定',
+    architecture: '🟠 架构阶段 — 基础设定已有，需要完善世界观和角色',
+    outline: '🔵 大纲阶段 — 架构已完善，可以推演大纲了',
+    writing: '🟢 创作阶段 — 大纲已就绪，开始章节创作',
+  }
+
   const missingItems: string[] = []
   if (project.title === '未命名项目' || !project.spark) missingItems.push('灵感设定')
   if (!project.synopsis) missingItems.push('简介')
@@ -429,6 +630,18 @@ function buildSystemPrompt(project: {
 ## 你的身份
 希腊神话中的信使之神，象征灵感传递、智慧引导与创作守护。你拥有项目的完整记忆，并能直接操作创作流程。
 
+## 🔄 创作工作流（脚手链）
+你是创作流程的引导者，请始终关注用户当前所处的阶段，并主动引导下一步：
+
+1. **灵感实验室** → 输入灵感关键词，AI 生成完整设定
+2. **架构看板** → 完善世界观、角色、世界规则
+3. **大纲推演** → AI 推演因果递进的前5章大纲
+4. **创作空间** → 逐章创作，AI 辅助生成草稿
+
+当前项目状态：${stageDescriptions[workflow.stage]}
+进度：${workflow.progress}%
+${workflow.suggestions.length > 0 ? '建议：' + workflow.suggestions.join('；') : ''}
+
 ## 🔧 你可以执行的工具
 
 ${toolDescriptions}
@@ -446,14 +659,17 @@ ${toolDescriptions}
 **重要规则：**
 - 当用户请求你帮忙完成创作操作时（如"帮我生成灵感"/"推演大纲"/"写第三章"），你应该**直接调用工具执行**，而不是只给出建议
 - 当项目缺少关键设定时，你应该**主动建议**并**询问是否执行**
-- 你可以引导整个创作流程：灵感→架构→大纲→章节创作
+- 你是创作流程的引导者，要时刻关注用户该做什么，并主动推动
+- 如果用户没有方向，主动使用 suggest_next_step 工具分析并给出建议
 - 执行工具后，用文字说明你做了什么以及结果
+- 如果某个阶段尚未准备好（如要推演大纲但缺少金手指设定），要提醒用户先完善
 
 ## 💬 交流风格
 - 亲切而专业，像经验丰富的编辑和创作伙伴
 - 条理清晰，善用结构化表达
 - 始终鼓励创作，但给出实质性建议
 - 适时引用项目设定来展示你的"记忆"
+- 主动推动创作流程，不要被动等待
 - 使用中文交流
 
 ## 📋 当前项目上下文
@@ -477,7 +693,7 @@ ${chaptersInfo}
 ${stateDesc}
 
 ---
-请基于以上项目信息与用户对话。当用户需要创作操作时，主动调用工具执行。`
+请基于以上项目信息与用户对话。当用户需要创作操作时，主动调用工具执行。作为创作引导者，请主动关注并推动创作流程。`
 }
 
 // ─── Parse tool calls from AI response ───────────────────────────────────────
@@ -544,7 +760,7 @@ export async function POST(request: Request) {
 
     // Build messages array
     const messages: { role: string; content: string }[] = [
-      { role: 'assistant', content: systemPrompt },
+      { role: 'system', content: systemPrompt },
     ]
 
     // Add conversation history (limit to last 16 messages)
@@ -586,15 +802,27 @@ export async function POST(request: Request) {
         detail: result.error || undefined,
       })
 
-      // If tool returned updated project data, save it
       if (result.success && result.data) {
         // Check for navigation
         if (call.tool === 'navigate_to' && (result.data as Record<string, unknown>).navigateTo) {
           actions[actions.length - 1].navigateTo = (result.data as Record<string, unknown>).navigateTo as string
         }
-        // If the data has chapters with storyBeats, it's a full project update
-        if ((result.data as Record<string, unknown>).chapters) {
+        // Check for suggest_next_step navigation
+        if (call.tool === 'suggest_next_step' && (result.data as Record<string, unknown>).navigateTo) {
+          actions[actions.length - 1].navigateTo = (result.data as Record<string, unknown>).navigateTo as string
+        }
+        // If the data has project with chapters, it's a full project update
+        const data = result.data as Record<string, unknown>
+        if (data.project && (data.project as Record<string, unknown>).chapters) {
+          updatedProject = data.project
+        } else if (data.chapters) {
           updatedProject = result.data
+        }
+        // For write_chapter_draft, extract chapterOrder for navigation
+        if (call.tool === 'write_chapter_draft' && data.chapterOrder) {
+          actions[actions.length - 1].detail = `第${data.chapterOrder}章`
+          // Navigate to writing tab
+          actions[actions.length - 1].navigateTo = 'writing'
         }
       }
     }
