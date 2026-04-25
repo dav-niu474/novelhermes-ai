@@ -47,3 +47,30 @@ Stage Summary:
 - Production deployment verified working at https://novelhermes-ai.vercel.app
 - Supabase project: yhfiiwcesovijyekllns.supabase.co
 - Key fix: System-level DATABASE_URL was overriding .env files - resolved by setting env vars explicitly in dev script
+
+---
+Task ID: 3
+Agent: Main
+Task: Fix critical bugs - spark field not saved, project auto-create, store sync, full flow verification
+
+Work Log:
+- Identified root cause: spark keyword was never saved to database during AI generation
+- Fixed /api/ai/spark/route.ts: Added `spark` field to the update query
+- Fixed /api/projects/[id]/route.ts PUT: Added `spark` field to accepted update fields
+- Rewrote SparkLab.tsx with critical fixes:
+  - Added ensureProject() helper: auto-creates project when none exists before generating spark
+  - Added updateStoreWithProject() helper: syncs both currentProject and projects list in store
+  - Fixed handleSave: now always ensures project exists, saves spark field, proper error handling
+  - Added toast notifications for save success
+  - Fixed handleSpark: auto-creates project before calling AI API
+- Fixed ArchitectureBoard.tsx refreshProject(): now also updates projects list in store
+- Updated db.ts: added SIGINT/SIGTERM handlers for graceful connection shutdown
+- Added allowedDevOrigins config in next.config.ts for preview panel
+- Verified full flow locally: projects API, spark generation, save, characters, world rules
+- Pushed code to GitHub and deployed to Vercel
+- Verified production: all CRUD operations work, spark field correctly saved
+
+Stage Summary:
+- Fixed 5 critical bugs in the spark generation and save flow
+- Production verified working at https://novelhermes-ai.vercel.app
+- Full flow: Spark Lab → Architecture Board → Outline Engine → Writing Space all functional
